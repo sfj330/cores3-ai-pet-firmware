@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"H:/大学/大三下/cores3\" -not -path '*/.git/*' 2>/dev/null | head -50)",
+      "Bash(python -c \"\nimport zipfile\nimport xml.etree.ElementTree as ET\n\ndocx_path = 'H:/大学/大三下/cores3/CoreS3_AI桌宠交互系统完整方案_M5Burner参考版.docx'\ntry:\n    with zipfile.ZipFile\\(docx_path\\) as z:\n        xml_content = z.read\\('word/document.xml'\\)\n        root = ET.fromstring\\(xml_content\\)\n        ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}\n        text = []\n        for t in root.iter\\('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'\\):\n            if t.text:\n                text.append\\(t.text\\)\n        content = ' '.join\\(text\\)\n        print\\(content[:5000]\\)\nexcept Exception as e:\n    print\\(f'Error: {e}'\\)\n\")",
+      "Bash(python -c \"\nimport zipfile, xml.etree.ElementTree as ET, os\n\ndocx_path = 'H:/大学/大三下/cores3/CoreS3_AI桌宠交互系统完整方案_M5Burner参考版.docx'\noutput_path = os.path.join\\(os.environ.get\\('TEMP', 'C:/temp'\\), 'docx_content.txt'\\)\nwith zipfile.ZipFile\\(docx_path\\) as z:\n    xml_content = z.read\\('word/document.xml'\\)\n    root = ET.fromstring\\(xml_content\\)\n    text = []\n    for t in root.iter\\('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'\\):\n        if t.text:\n            text.append\\(t.text\\)\n    content = ' '.join\\(text\\)\n    with open\\(output_path, 'w', encoding='utf-8'\\) as f:\n        f.write\\(content[:10000]\\)\nprint\\(output_path\\)\n\")",
+      "Bash(cd \"H:/大学/大三下/cores3\" && pio run 2>&1)",
+      "Bash(which python3:*)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run 2>&1)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run --clean 2>&1 && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run 2>&1)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && rm -rf \".pio\" 2>/dev/null; \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run 2>&1)",
+      "Bash(\"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" device:*)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run --target upload 2>&1)",
+      "Bash(find \"C:/Users/shenf/.platformio/packages/framework-arduinoespressif32\" -iname \"*M5CoreS3*\" -o -iname \"*GC0308*\" -o -iname \"*camera*\" 2>/dev/null | head -30)",
+      "Bash(find \"C:/Users/shenf/.platformio/packages/framework-arduinoespressif32@3.20016.0\" -iname \"*M5CoreS3*\" -o -iname \"*GC0308*\" -o -iname \"*camera*\" 2>/dev/null | head -30)",
+      "Bash(find \"C:/Users/shenf/.platformio\" -iname \"*M5CoreS3.h\" 2>/dev/null | head -20)",
+      "Bash(find \"H:/大学/大三下/cores3\" -iname \"*M5CoreS3*\" 2>/dev/null | head -20)",
+      "Bash(find \"C:/Users/shenf/.platformio\" -iname \"*GC0308*\" 2>/dev/null | head -20)",
+      "Bash(find \"H:/大学/大三下/cores3/.pio/libdeps/m5stack-cores3\" -type f -name \"*.h\" -o -name \"*.hpp\" -o -name \"*.cpp\" -o -name \"*.ino\" -o -name \"*.md\" 2>/dev/null | sort)",
+      "Bash(find \"C:/Users/shenf/.platformio/packages/framework-arduinoespressif32\" -path \"*/esp32-camera/*\" -name \"sensor.h\" 2>/dev/null | head -5)",
+      "Bash(find \"H:/大学/大三下/cores3/.pio/libdeps\" -iname \"*M5Unified*\" -maxdepth 2 2>/dev/null | head -5)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run 2>&1 | tail -20)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run --target upload 2>&1 | tail -10)",
+      "Bash(cd \"H:/大学/大三下/cores3\" && \"C:/Users/shenf/.platformio/penv/Scripts/pio.exe\" run 2>&1 | tail -10)"
+    ]
+  }
+}
