@@ -10,12 +10,8 @@ public:
     bool begin();
     void update();
 
-    // Eye gaze offset (normalized -1.0 to 1.0)
     void setGazeOffset(float dx, float dy);
-
-    // Force an expression (overrides state machine)
-    void setExpression(int emotion);  // takes FaceEmotion as int for Arduino compat
-
+    void setExpression(int emotion);
     void setSpeakingMouthOpen(bool open);
     void wake();
 
@@ -42,14 +38,12 @@ private:
     float targetGazeX_ = 0.0f;
     float targetGazeY_ = 0.0f;
 
-    int currentEmotion_ = 0; // FaceEmotion
+    int currentEmotion_ = 0;
 
-    // Speaking animation
     bool speakingMouthOpen_ = false;
     unsigned long lastSpeakAnimTime_ = 0;
     float mouthOpenAmount_ = 0.0f;
 
-    // Sleeping dim state
     bool sleeping_ = false;
     int brightness_ = 255;
 };

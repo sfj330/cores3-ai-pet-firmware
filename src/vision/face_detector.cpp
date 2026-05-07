@@ -6,6 +6,13 @@ FaceDetector::FaceDetector() = default;
 
 bool FaceDetector::begin() {
     enabled_ = FACE_DETECTION_ENABLED_ON_BOOT;
+    Serial.println("=== FaceDetector BLOCKER REPORT ===");
+    Serial.println("ESP-DL/ESP-WHO requires ESP-IDF v5.3+ CMake build system.");
+    Serial.println("Current project uses Arduino framework on PlatformIO.");
+    Serial.println("ESP-DL human_face_detect model cannot be linked under Arduino framework.");
+    Serial.println("Face detection will return 'no face' until ESP-DL is integrated.");
+    Serial.println("To resolve: switch to ESP-IDF framework or use Arduino-as-IDF-component.");
+    Serial.println("===================================");
     return true;
 }
 
@@ -35,21 +42,6 @@ FaceResult FaceDetector::detect(const uint8_t* frameData, int width, int height)
     }
     lastDetectionTime_ = now;
 
-    // -------------------------------------------------
-    // PLACEHOLDER: Replace with real ESP-WHO detection
-    //
-    // For now, this returns a "face not detected" result.
-    // When integrating ESP-WHO:
-    //   1. Include <esp_who.hpp> / human_face_detect_msr01.hpp
-    //   2. Create detector in begin()
-    //   3. Call detector->run(frameData, width, height)
-    //   4. Return first face's bounding box
-    //
-    // The frame data is RGB565 format from the camera.
-    // You may need to convert to grayscale first.
-    // -------------------------------------------------
-
-    // result.detected remains false by default = no face
     result.detected = false;
 
     return result;

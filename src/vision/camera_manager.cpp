@@ -2,6 +2,8 @@
 #include "config/app_config.h"
 #include <M5CoreS3.h>
 #include <esp_camera.h>
+#include <img_converters.h>
+#include <SD.h>
 
 CameraManager::CameraManager() = default;
 
@@ -68,6 +70,82 @@ bool CameraManager::isRunning() const {
 
 bool CameraManager::isInitialized() const {
     return initialized_;
+}
+
+bool CameraManager::ensureMutex() {
+    if (cameraMutex_ == nullptr) {
+        cameraMutex_ = xSemaphoreCreateMutex();
+    }
+    return cameraMutex_ != nullptr;
+}
+
+bool CameraManager::captureJpegToFile(const char* path, String& status) {
+    if (!initialized_) {
+        status = "Camera not initialized";
+        return false;
+    }
+
+    if (!ensureMutex()) {
+        status = "Mutex create failed";
+        return false;
+    }
+
+    if (xSemaphoreTake(cameraMutex_, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        status = "Camera busy";
+        return false;
+    }
+
+    bool ok = false;
+
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+        status = "Capture failed";
+        xSemaphoreGive(cameraMutex_);
+        return false;
+    }
+
+    if (fb->format == PIXFORMAT_JPEG) {
+        File file = SD.open(path, FILE_WRITE);
+        if (file) {
+            size_t written = file.write(fb->buf, fb->len);
+            file.close();
+            if (written == fb->len) {
+                status = String("Saved ") + path;
+                ok = true;
+            } else {
+                status = "Write failed";
+            }
+        } else {
+            status = "SD open failed";
+        }
+    } else {
+        uint8_t* jpgBuf = nullptr;
+        size_t jpgLen = 0;
+        bool jpegOk = fmt2jpg(fb->buf, fb->len, fb->width, fb->height,
+                               fb->format, CAMERA_JPEG_QUALITY, &jpgBuf, &jpgLen);
+        if (!jpegOk || jpgBuf == nullptr) {
+            status = "JPEG convert failed";
+        } else {
+            File file = SD.open(path, FILE_WRITE);
+            if (file) {
+                size_t written = file.write(jpgBuf, jpgLen);
+                file.close();
+                if (written == jpgLen) {
+                    status = String("Saved ") + path;
+                    ok = true;
+                } else {
+                    status = "Write failed";
+                }
+            } else {
+                status = "SD open failed";
+            }
+            free(jpgBuf);
+        }
+    }
+
+    esp_camera_fb_return(fb);
+    xSemaphoreGive(cameraMutex_);
+    return ok;
 }
 
 void CameraManager::scaleDown(const uint8_t* src, uint8_t* dst,

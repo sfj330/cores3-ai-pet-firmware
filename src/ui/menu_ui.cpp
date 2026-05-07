@@ -2,15 +2,21 @@
 #include "config/app_config.h"
 #include <M5CoreS3.h>
 
-MenuUI::MenuUI() = default;
+MenuUI::MenuUI() : canvas_(&M5.Lcd) {}
 
 void MenuUI::begin() {
-    // No special init needed
+    canvas_.setPsram(true);
+    canvas_.setColorDepth(16);
+    spriteReady_ = canvas_.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT) != nullptr;
+    if (spriteReady_) {
+        canvas_.fillSprite(TFT_BLACK);
+    }
 }
 
 void MenuUI::show() {
     visible_ = true;
     activeCard_ = 0;
+    dirty_ = true;
 }
 
 void MenuUI::hide() {
@@ -18,8 +24,9 @@ void MenuUI::hide() {
 }
 
 void MenuUI::setActiveCard(int card) {
-    if (card >= 0 && card < CARD_COUNT) {
+    if (card >= 0 && card < CARD_COUNT && card != activeCard_) {
         activeCard_ = card;
+        dirty_ = true;
     }
 }
 
@@ -27,18 +34,43 @@ int MenuUI::getActiveCard() const {
     return activeCard_;
 }
 
+void MenuUI::setWifiStatus(const char* status, const char* ip) {
+    String newStatus = status ? String(status) : String();
+    String newIp = ip ? String(ip) : String();
+    if (newStatus != wifiStatus_ || newIp != wifiIp_) {
+        wifiStatus_ = newStatus;
+        wifiIp_ = newIp;
+        dirty_ = true;
+    }
+}
+
+void MenuUI::markDirty() {
+    dirty_ = true;
+}
+
+MenuHitZone MenuUI::hitTest(int x, int y) const {
+    if (x >= BACK_X && x < BACK_X + BACK_W && y >= BACK_Y && y < BACK_Y + BACK_H) {
+        return MenuHitZone::MENU_HIT_BACK;
+    }
+    int cardX = 20, cardY = 20;
+    int cardW = DISPLAY_WIDTH - 40, cardH = DISPLAY_HEIGHT - 80;
+    if (x >= cardX && x < cardX + cardW && y >= cardY && y < cardY + cardH) {
+        return MenuHitZone::MENU_HIT_CARD;
+    }
+    return MenuHitZone::MENU_HIT_NONE;
+}
+
 void MenuUI::update() {
-    if (!visible_) return;
-    M5.Lcd.fillScreen(TFT_BLACK);
+    if (!visible_ || !spriteReady_) return;
+    if (!dirty_) return;
 
-    int cardW = DISPLAY_WIDTH - 40;
-    int cardH = DISPLAY_HEIGHT - 80;
-    int cardX = 20;
-    int cardY = 20;
-
+    canvas_.fillSprite(TFT_BLACK);
     drawCard(activeCard_, true);
     drawPageIndicator();
     drawBackButton();
+
+    canvas_.pushSprite(0, 0);
+    dirty_ = false;
 }
 
 void MenuUI::drawCard(int index, bool focused) {
@@ -48,7 +80,7 @@ void MenuUI::drawCard(int index, bool focused) {
     int cardY = 20;
 
     uint16_t bgColor = focused ? TFT_WHITE : TFT_DARKGREY;
-    M5.Lcd.fillRoundRect(cardX, cardY, cardW, cardH, 8, bgColor);
+    canvas_.fillRoundRect(cardX, cardY, cardW, cardH, 8, bgColor);
 
     switch (index) {
         case 0: drawWiFiCard(cardX, cardY, cardW, cardH, focused); break;
@@ -61,106 +93,107 @@ void MenuUI::drawCard(int index, bool focused) {
 void MenuUI::drawWiFiCard(int x, int y, int w, int h, bool focused) {
     uint16_t textColor = focused ? TFT_BLACK : TFT_WHITE;
 
-    M5.Lcd.setTextColor(textColor);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.setCursor(x + 20, y + 20);
-    M5.Lcd.print("Wi-Fi");
+    canvas_.setTextColor(textColor);
+    canvas_.setTextSize(2);
+    canvas_.setCursor(x + 20, y + 20);
+    canvas_.print("Wi-Fi");
 
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(x + 20, y + 55);
-    M5.Lcd.print("Status: ");
-    M5.Lcd.setTextColor(TFT_RED);
-    M5.Lcd.print("Disconnected");
+    canvas_.setTextSize(1);
+    canvas_.setCursor(x + 20, y + 55);
+    canvas_.print("Status: ");
+    bool isConnected = wifiStatus_ == "Connected";
+    canvas_.setTextColor(isConnected ? TFT_GREEN : TFT_RED);
+    canvas_.print(wifiStatus_);
 
-    M5.Lcd.setTextColor(textColor);
-    M5.Lcd.setCursor(x + 20, y + 75);
-    M5.Lcd.print("IP: --.--.--.--");
+    canvas_.setTextColor(textColor);
+    canvas_.setCursor(x + 20, y + 75);
+    canvas_.print("IP: ");
+    canvas_.print(wifiIp_);
 
-    M5.Lcd.setCursor(x + 20, y + 95);
-    M5.Lcd.print("Tap to configure");
+    canvas_.setCursor(x + 20, y + 95);
+    canvas_.print("Swipe to switch card");
 }
 
 void MenuUI::drawCameraCard(int x, int y, int w, int h, bool focused) {
     uint16_t textColor = focused ? TFT_BLACK : TFT_WHITE;
 
-    M5.Lcd.setTextColor(textColor);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.setCursor(x + 20, y + 20);
-    M5.Lcd.print("Camera Debug");
+    canvas_.setTextColor(textColor);
+    canvas_.setTextSize(2);
+    canvas_.setCursor(x + 20, y + 20);
+    canvas_.print("Camera Debug");
 
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(x + 20, y + 55);
-    M5.Lcd.print("View camera preview");
+    canvas_.setTextSize(1);
+    canvas_.setCursor(x + 20, y + 55);
+    canvas_.print("View camera preview");
 
-    M5.Lcd.setCursor(x + 20, y + 75);
-    M5.Lcd.print("with FPS overlay");
+    canvas_.setCursor(x + 20, y + 75);
+    canvas_.print("with FPS overlay");
 
-    M5.Lcd.setCursor(x + 20, y + 95);
-    M5.Lcd.setTextColor(TFT_BLUE);
-    M5.Lcd.print("Tap to enter");
+    canvas_.setCursor(x + 20, y + 95);
+    canvas_.setTextColor(TFT_BLUE);
+    canvas_.print("Tap to enter");
 }
 
 void MenuUI::drawPomodoroCard(int x, int y, int w, int h, bool focused) {
     uint16_t textColor = focused ? TFT_BLACK : TFT_WHITE;
 
-    M5.Lcd.setTextColor(textColor);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.setCursor(x + 20, y + 20);
-    M5.Lcd.print("Pomodoro");
+    canvas_.setTextColor(textColor);
+    canvas_.setTextSize(2);
+    canvas_.setCursor(x + 20, y + 20);
+    canvas_.print("Pomodoro");
 
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(x + 20, y + 55);
-    M5.Lcd.print("25 min focus timer");
+    canvas_.setTextSize(1);
+    canvas_.setCursor(x + 20, y + 55);
+    canvas_.print("25 min focus timer");
 
-    M5.Lcd.setCursor(x + 20, y + 75);
-    M5.Lcd.print("5 min break timer");
+    canvas_.setCursor(x + 20, y + 75);
+    canvas_.print("5 min break timer");
 
-    M5.Lcd.setCursor(x + 20, y + 95);
-    M5.Lcd.setTextColor(TFT_BLUE);
-    M5.Lcd.print("Tap to enter");
+    canvas_.setCursor(x + 20, y + 95);
+    canvas_.setTextColor(TFT_BLUE);
+    canvas_.print("Tap to enter");
 }
 
 void MenuUI::drawSystemCard(int x, int y, int w, int h, bool focused) {
     uint16_t textColor = focused ? TFT_BLACK : TFT_WHITE;
 
-    M5.Lcd.setTextColor(textColor);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.setCursor(x + 20, y + 20);
-    M5.Lcd.print("System Info");
+    canvas_.setTextColor(textColor);
+    canvas_.setTextSize(2);
+    canvas_.setCursor(x + 20, y + 20);
+    canvas_.print("System Info");
 
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(x + 20, y + 55);
-    M5.Lcd.print("Battery: ");
-    M5.Lcd.print("--.-V");
+    canvas_.setTextSize(1);
+    canvas_.setCursor(x + 20, y + 55);
+    canvas_.print("Battery: ");
+    canvas_.print("--.-V");
 
-    M5.Lcd.setCursor(x + 20, y + 75);
-    M5.Lcd.print("Free Heap: ");
-    M5.Lcd.print(ESP.getFreeHeap() / 1024);
-    M5.Lcd.print(" KB");
+    canvas_.setCursor(x + 20, y + 75);
+    canvas_.print("Free Heap: ");
+    canvas_.print(ESP.getFreeHeap() / 1024);
+    canvas_.print(" KB");
 
-    M5.Lcd.setCursor(x + 20, y + 95);
-    M5.Lcd.print("PSRAM: ");
-    M5.Lcd.print(ESP.getFreePsram() / 1024);
-    M5.Lcd.print(" KB free");
+    canvas_.setCursor(x + 20, y + 95);
+    canvas_.print("PSRAM: ");
+    canvas_.print(ESP.getFreePsram() / 1024);
+    canvas_.print(" KB free");
 }
 
 void MenuUI::drawBackButton() {
-    // Back arrow in top-left corner
-    M5.Lcd.fillTriangle(15, DISPLAY_HEIGHT - 25, 25, DISPLAY_HEIGHT - 35,
-                        25, DISPLAY_HEIGHT - 15, TFT_WHITE);
-    M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(30, DISPLAY_HEIGHT - 22);
-    M5.Lcd.print("Back (left-swipe)");
+    canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, TFT_DARKGREY);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setTextSize(1);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.setCursor(BACK_X + BACK_W / 2 - 16, BACK_Y + BACK_H / 2 - 4);
+    canvas_.print("Back");
+    canvas_.setTextDatum(TL_DATUM);
 }
 
 void MenuUI::drawPageIndicator() {
-    // Dots at the bottom
     int dotY = DISPLAY_HEIGHT - 10;
     int startX = DISPLAY_WIDTH / 2 - (CARD_COUNT * 8) / 2;
 
     for (int i = 0; i < CARD_COUNT; ++i) {
         uint16_t color = (i == activeCard_) ? TFT_WHITE : TFT_DARKGREY;
-        M5.Lcd.fillCircle(startX + i * 12, dotY, 3, color);
+        canvas_.fillCircle(startX + i * 12, dotY, 3, color);
     }
 }

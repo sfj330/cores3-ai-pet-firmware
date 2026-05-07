@@ -2,14 +2,22 @@
 #include "config/app_config.h"
 #include <M5CoreS3.h>
 
-CameraDebugUI::CameraDebugUI() = default;
+CameraDebugUI::CameraDebugUI() : canvas_(&M5.Lcd) {}
 
 void CameraDebugUI::begin() {
-    // No special init needed
+    canvas_.setPsram(true);
+    canvas_.setColorDepth(16);
+    spriteReady_ = canvas_.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT) != nullptr;
+    if (spriteReady_) {
+        canvas_.fillSprite(TFT_BLACK);
+    }
 }
 
 void CameraDebugUI::show() {
     visible_ = true;
+    if (spriteReady_) {
+        canvas_.fillSprite(TFT_BLACK);
+    }
 }
 
 void CameraDebugUI::hide() {
@@ -24,57 +32,94 @@ void CameraDebugUI::setCameraReady(bool ready) {
     cameraReady_ = ready;
 }
 
-void CameraDebugUI::setDetectionOverlay(bool enabled) {
-    showDetection_ = enabled;
+void CameraDebugUI::setLastPhotoPath(const char* path) {
+    lastPhotoPath_ = path ? String(path) : String();
 }
 
-bool CameraDebugUI::getDetectionOverlay() const {
-    return showDetection_;
+void CameraDebugUI::setSdReady(bool ready) {
+    sdReady_ = ready;
+}
+
+void CameraDebugUI::setCaptureStatus(const char* status) {
+    captureStatus_ = status ? String(status) : String();
+}
+
+CameraHitZone CameraDebugUI::hitTest(int x, int y) const {
+    if (x >= BACK_X && x < BACK_X + BACK_W && y >= BACK_Y && y < BACK_Y + BACK_H) {
+        return CameraHitZone::HIT_BACK;
+    }
+    if (x >= SHOT_X && x < SHOT_X + SHOT_W && y >= SHOT_Y && y < SHOT_Y + SHOT_H) {
+        return CameraHitZone::HIT_SHOT;
+    }
+    return CameraHitZone::HIT_NONE;
+}
+
+void CameraDebugUI::pushCameraFrame(const uint16_t* data, int w, int h) {
+    if (!spriteReady_ || !visible_) return;
+    canvas_.pushImage(0, 0, w, h, data);
 }
 
 void CameraDebugUI::update() {
-    if (!visible_) return;
-
-    // Draw debug overlay on top of camera image
-    drawDebugOverlay();
+    if (!visible_ || !spriteReady_) return;
+    drawOverlay();
     drawBackButton();
+    drawShotButton();
+    canvas_.pushSprite(0, 0);
 }
 
-void CameraDebugUI::drawDebugOverlay() {
-    // FPS counter in top-left
-    M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(5, 5);
-    M5.Lcd.printf("FPS: %.1f", currentFps_);
+void CameraDebugUI::drawOverlay() {
+    canvas_.setTextSize(1);
+    canvas_.setTextDatum(TL_DATUM);
 
-    // Detection toggle status
-    M5.Lcd.setCursor(5, 20);
-    M5.Lcd.setTextColor(showDetection_ ? TFT_GREEN : TFT_RED, TFT_BLACK);
-    M5.Lcd.print("Detection: ");
-    M5.Lcd.print(showDetection_ ? "ON" : "OFF");
+    canvas_.setTextColor(TFT_GREEN, TFT_BLACK);
+    canvas_.setCursor(5, 5);
+    canvas_.printf("FPS: %.1f", currentFps_);
 
-    // Resolution info
-    M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-    M5.Lcd.setCursor(5, 35);
-    M5.Lcd.printf("%dx%d", CAMERA_FRAME_WIDTH, CAMERA_FRAME_HEIGHT);
+    canvas_.setCursor(5, 20);
+    canvas_.printf("%dx%d", CAMERA_FRAME_WIDTH, CAMERA_FRAME_HEIGHT);
 
     if (!cameraReady_) {
-        M5.Lcd.setTextColor(TFT_RED, TFT_BLACK);
-        M5.Lcd.setCursor(5, 50);
-        M5.Lcd.print("Camera not ready");
+        canvas_.setTextColor(TFT_RED, TFT_BLACK);
+        canvas_.setCursor(5, 35);
+        canvas_.print("Camera not ready");
     }
 
-    // Hint for detection toggle
-    M5.Lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-    M5.Lcd.setCursor(5, DISPLAY_HEIGHT - 40);
-    M5.Lcd.print("Tap to toggle detection");
+    if (!sdReady_) {
+        canvas_.setTextColor(TFT_YELLOW, TFT_BLACK);
+        canvas_.setCursor(5, 50);
+        canvas_.print("No SD card");
+    }
+
+    if (lastPhotoPath_.length() > 0) {
+        canvas_.setTextColor(TFT_CYAN, TFT_BLACK);
+        canvas_.setCursor(5, 65);
+        canvas_.print(lastPhotoPath_);
+    }
+
+    if (captureStatus_.length() > 0) {
+        canvas_.setTextColor(TFT_WHITE, TFT_BLACK);
+        canvas_.setCursor(5, 80);
+        canvas_.print(captureStatus_);
+    }
 }
 
 void CameraDebugUI::drawBackButton() {
-    M5.Lcd.fillTriangle(DISPLAY_WIDTH - 5, 10, DISPLAY_WIDTH - 15, 5,
-                        DISPLAY_WIDTH - 15, 15, TFT_WHITE);
-    M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(DISPLAY_WIDTH - 40, 8);
-    M5.Lcd.print("Back");
+    canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 4, TFT_DARKGREY);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setTextSize(1);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.setCursor(BACK_X + BACK_W / 2 - 12, BACK_Y + BACK_H / 2 - 4);
+    canvas_.print("Back");
+    canvas_.setTextDatum(TL_DATUM);
+}
+
+void CameraDebugUI::drawShotButton() {
+    uint16_t btnColor = sdReady_ ? TFT_GREEN : TFT_DARKGREY;
+    canvas_.fillRoundRect(SHOT_X, SHOT_Y, SHOT_W, SHOT_H, 6, btnColor);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setTextSize(2);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.setCursor(SHOT_X + SHOT_W / 2 - 16, SHOT_Y + SHOT_H / 2 - 6);
+    canvas_.print("SHOT");
+    canvas_.setTextDatum(TL_DATUM);
 }

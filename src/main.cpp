@@ -18,8 +18,9 @@
 #include "ai/xiaozhi_client.h"
 #include "ai/voice_state.h"
 #include "power/power_manager.h"
+#include "network/wifi_manager.h"
+#include "storage/storage_manager.h"
 
-// ==================== Global Module Instances ====================
 FaceUI gFaceUI;
 MenuUI gMenuUI;
 CameraDebugUI gCameraDebugUI;
@@ -29,23 +30,23 @@ FaceDetector gFaceDetector;
 FaceTracker gFaceTracker;
 XiaoZhiClient gXiaoZhiClient;
 PowerManager gPowerManager;
+WifiManager gWifiManager;
+StorageManager gStorageManager;
 
-// ==================== Shared State ====================
 static float gCurrentFps = 0.0f;
 static unsigned long gLastFpsCalc = 0;
 static int gFrameCount = 0;
 
-// ==================== FreeRTOS Task Handles ====================
 static TaskHandle_t uiTaskHandle = nullptr;
 static TaskHandle_t touchTaskHandle = nullptr;
 static TaskHandle_t cameraTaskHandle = nullptr;
 static TaskHandle_t visionTaskHandle = nullptr;
 static TaskHandle_t aiTaskHandle = nullptr;
 static TaskHandle_t powerTaskHandle = nullptr;
+static TaskHandle_t networkTaskHandle = nullptr;
 static SemaphoreHandle_t displayMutex = nullptr;
 
-// ==================== Forward Declarations ====================
-static void gestureEventHandler(GestureType gesture);
+static void gestureEventHandler(const GestureEvent& event);
 static void stateChangeHandler(AppStateEnum state);
 static void handleEvent(const Event& event);
 
@@ -59,9 +60,8 @@ static void giveDisplayLock() {
     }
 }
 
-// ==================== UI Task ====================
 void uiTask(void* pvParameters) {
-    const TickType_t delayTicks = pdMS_TO_TICKS(1000 / 20); // 20 FPS
+    const TickType_t delayTicks = pdMS_TO_TICKS(1000 / 20);
 
     while (true) {
         unsigned long now = millis();
@@ -105,7 +105,6 @@ void uiTask(void* pvParameters) {
     }
 }
 
-// ==================== Touch Task ====================
 void touchTask(void* pvParameters) {
     static GestureManager gestureManager;
     const TickType_t delayTicks = pdMS_TO_TICKS(1000 / TOUCH_SAMPLING_HZ);
@@ -130,20 +129,18 @@ void touchTask(void* pvParameters) {
     }
 }
 
-// ==================== Camera Task ====================
 void cameraTask(void* pvParameters) {
     const TickType_t delayTicks = pdMS_TO_TICKS(1000 / CAMERA_FPS);
 
     while (true) {
         if (gCameraManager.isRunning()) {
-            CameraFrame frame = gCameraManager.getDisplayFrame();
+            AppStateEnum state = AppState::instance().getState();
 
-            if (frame.valid) {
-                if (AppState::instance().getState() == AppStateEnum::CAMERA_DEBUG) {
-                    if (takeDisplayLock(pdMS_TO_TICKS(5))) {
-                        M5.Lcd.pushImage(0, 0, frame.width, frame.height, (uint16_t*)frame.data);
-                        giveDisplayLock();
-                    }
+            if (state == AppStateEnum::CAMERA_DEBUG) {
+                CameraFrame frame = gCameraManager.getDisplayFrame();
+
+                if (frame.valid) {
+                    gCameraDebugUI.pushCameraFrame((uint16_t*)frame.data, frame.width, frame.height);
                 }
             }
         }
@@ -152,7 +149,6 @@ void cameraTask(void* pvParameters) {
     }
 }
 
-// ==================== Vision Task ====================
 void visionTask(void* pvParameters) {
     const TickType_t delayTicks = pdMS_TO_TICKS(1000 / DETECTION_FPS);
 
@@ -199,7 +195,6 @@ void visionTask(void* pvParameters) {
     }
 }
 
-// ==================== AI Task ====================
 void aiTask(void* pvParameters) {
     const TickType_t delayTicks = pdMS_TO_TICKS(50);
 
@@ -212,7 +207,6 @@ void aiTask(void* pvParameters) {
     }
 }
 
-// ==================== Power Task ====================
 void powerTask(void* pvParameters) {
     const TickType_t delayTicks = pdMS_TO_TICKS(POWER_TASK_INTERVAL_MS);
 
@@ -228,19 +222,58 @@ void powerTask(void* pvParameters) {
     }
 }
 
-// ==================== Gesture Event Handler ====================
-static void gestureEventHandler(GestureType gesture) {
+void networkTask(void* pvParameters) {
+    const TickType_t delayTicks = pdMS_TO_TICKS(WIFI_RECONNECT_INTERVAL_MS);
+
+    while (true) {
+        gWifiManager.update();
+
+        if (AppState::instance().getState() == AppStateEnum::MENU) {
+            gMenuUI.setWifiStatus(gWifiManager.statusText().c_str(), gWifiManager.ipString().c_str());
+        }
+
+        vTaskDelay(delayTicks);
+    }
+}
+
+static void handleCameraShot() {
+    if (!gStorageManager.isReady()) {
+        gCameraDebugUI.setCaptureStatus("No SD card");
+        return;
+    }
+
+    gCameraDebugUI.setCaptureStatus("Capturing...");
+
+    String path = gStorageManager.nextPhotoPath();
+    if (path.length() == 0) {
+        gCameraDebugUI.setCaptureStatus("Path error");
+        return;
+    }
+
+    String status;
+    bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
+    if (ok) {
+        gCameraDebugUI.setLastPhotoPath(path.c_str());
+        gCameraDebugUI.setCaptureStatus(status.c_str());
+        Serial.printf("Photo saved: %s\n", path.c_str());
+    } else {
+        gCameraDebugUI.setCaptureStatus(status.c_str());
+        Serial.printf("Photo failed: %s\n", status.c_str());
+    }
+}
+
+static void gestureEventHandler(const GestureEvent& event) {
     AppState& appState = AppState::instance();
     AppStateEnum currentState = appState.getState();
 
     Event gestureEvent;
     gestureEvent.type = EventType::GESTURE_EVENT;
-    gestureEvent.intParam = static_cast<int>(gesture);
+    gestureEvent.intParam = static_cast<int>(event.type);
     EventBus::instance().publish(gestureEvent);
 
     switch (currentState) {
         case AppStateEnum::FACE:
-            switch (gesture) {
+            switch (event.type) {
                 case GestureType::RIGHT_SWIPE:
                     appState.setState(AppStateEnum::MENU);
                     break;
@@ -248,9 +281,12 @@ static void gestureEventHandler(GestureType gesture) {
                     appState.setEmotion(FaceEmotion::CURIOUS);
                     break;
                 case GestureType::DOUBLE_TAP:
-                    appState.setEmotion(FaceEmotion::LISTENING);
-                    if (gXiaoZhiClient.isConnected()) {
+                    if (gWifiManager.isConnected()) {
+                        appState.setEmotion(FaceEmotion::LISTENING);
                         gXiaoZhiClient.startListening();
+                    } else {
+                        appState.setEmotion(FaceEmotion::SURPRISED);
+                        Serial.println("AI: Wi-Fi not connected");
                     }
                     break;
                 case GestureType::LONG_PRESS:
@@ -265,15 +301,14 @@ static void gestureEventHandler(GestureType gesture) {
             }
             break;
 
-        case AppStateEnum::MENU:
-            switch (gesture) {
-                case GestureType::LEFT_SWIPE:
+        case AppStateEnum::MENU: {
+            MenuHitZone hit = gMenuUI.hitTest(event.endX, event.endY);
+            if (event.type == GestureType::SINGLE_TAP) {
+                if (hit == MenuHitZone::MENU_HIT_BACK) {
                     appState.setState(AppStateEnum::FACE);
                     break;
-                case GestureType::RIGHT_SWIPE:
-                    gMenuUI.setActiveCard(gMenuUI.getActiveCard() + 1);
-                    break;
-                case GestureType::SINGLE_TAP:
+                }
+                if (hit == MenuHitZone::MENU_HIT_CARD) {
                     switch (gMenuUI.getActiveCard()) {
                         case 0: break;
                         case 1: appState.setState(AppStateEnum::CAMERA_DEBUG); break;
@@ -281,39 +316,84 @@ static void gestureEventHandler(GestureType gesture) {
                         case 3: break;
                     }
                     break;
+                }
+            }
+            switch (event.type) {
+                case GestureType::LEFT_SWIPE:
+                    appState.setState(AppStateEnum::FACE);
+                    break;
+                case GestureType::RIGHT_SWIPE:
+                    gMenuUI.setActiveCard(gMenuUI.getActiveCard() + 1);
+                    break;
                 default:
                     break;
             }
             break;
+        }
 
-        case AppStateEnum::CAMERA_DEBUG:
-            switch (gesture) {
-                case GestureType::LEFT_SWIPE:
+        case AppStateEnum::CAMERA_DEBUG: {
+            CameraHitZone hit = gCameraDebugUI.hitTest(event.endX, event.endY);
+            if (event.type == GestureType::SINGLE_TAP) {
+                if (hit == CameraHitZone::HIT_BACK) {
                     appState.setState(AppStateEnum::MENU);
                     break;
-                case GestureType::SINGLE_TAP:
-                    gCameraDebugUI.setDetectionOverlay(!gCameraDebugUI.getDetectionOverlay());
+                }
+                if (hit == CameraHitZone::HIT_SHOT) {
+                    handleCameraShot();
+                    break;
+                }
+            }
+            switch (event.type) {
+                case GestureType::LEFT_SWIPE:
+                    appState.setState(AppStateEnum::MENU);
                     break;
                 default:
                     break;
             }
             break;
+        }
 
-        case AppStateEnum::POMODORO:
-            switch (gesture) {
-                case GestureType::LEFT_SWIPE:
+        case AppStateEnum::POMODORO: {
+            PomoHitZone hit = gPomodoroUI.hitTest(event.endX, event.endY);
+            if (event.type == GestureType::SINGLE_TAP) {
+                if (hit == PomoHitZone::POMO_HIT_BACK) {
                     appState.setState(AppStateEnum::MENU);
                     break;
-                case GestureType::SINGLE_TAP:
+                }
+                if (hit == PomoHitZone::POMO_HIT_START) {
                     gPomodoroUI.togglePause();
                     break;
+                }
+                if (hit == PomoHitZone::POMO_HIT_RESET) {
+                    gPomodoroUI.reset();
+                    gPomodoroUI.markDirty();
+                    break;
+                }
+                if (hit == PomoHitZone::POMO_HIT_SKIP) {
+                    PomodoroState ps = gPomodoroUI.getState();
+                    if (ps == PomodoroState::FOCUS) {
+                        gPomodoroUI.startBreak();
+                    } else if (ps == PomodoroState::BREAK) {
+                        gPomodoroUI.reset();
+                        gPomodoroUI.markDirty();
+                    }
+                    break;
+                }
+                gPomodoroUI.togglePause();
+                break;
+            }
+            switch (event.type) {
+                case GestureType::LEFT_SWIPE:
+                    appState.setState(AppStateEnum::MENU);
+                    break;
                 default:
                     break;
             }
             break;
+        }
 
         case AppStateEnum::SLEEP:
-            switch (gesture) {
+            switch (event.type) {
                 case GestureType::SINGLE_TAP:
                 case GestureType::DOUBLE_TAP:
                     appState.setState(AppStateEnum::FACE);
@@ -330,7 +410,6 @@ static void gestureEventHandler(GestureType gesture) {
     }
 }
 
-// ==================== State Change Handler ====================
 static void stateChangeHandler(AppStateEnum state) {
     switch (state) {
         case AppStateEnum::FACE:
@@ -349,10 +428,12 @@ static void stateChangeHandler(AppStateEnum state) {
                 gCameraManager.stopCapture();
                 gCameraDebugUI.setCameraReady(false);
             }
+            gMenuUI.setWifiStatus(gWifiManager.statusText().c_str(), gWifiManager.ipString().c_str());
             gMenuUI.show();
             break;
 
         case AppStateEnum::CAMERA_DEBUG:
+            gCameraDebugUI.setSdReady(gStorageManager.isReady());
             gCameraDebugUI.show();
             if (!gCameraManager.isRunning()) {
                 bool cameraReady = gCameraManager.isInitialized() || gCameraManager.begin();
@@ -380,7 +461,6 @@ static void stateChangeHandler(AppStateEnum state) {
     }
 }
 
-// ==================== AI State Change Handler ====================
 static void aiStateHandler(VoiceState voiceState) {
     AppState& appState = AppState::instance();
     switch (voiceState) {
@@ -396,7 +476,6 @@ static void aiStateHandler(VoiceState voiceState) {
     EventBus::instance().publish(aiEvent);
 }
 
-// ==================== Low Battery Handler ====================
 static void lowBatteryHandler(float voltage) {
     AppState& appState = AppState::instance();
     if (appState.getState() == AppStateEnum::FACE) {
@@ -404,12 +483,9 @@ static void lowBatteryHandler(float voltage) {
     }
 }
 
-// ==================== Event Bus Callback ====================
 static void handleEvent(const Event& event) {
-    // Future: additional logic
 }
 
-// Helper: show debug step on screen during boot
 static void bootStep(const char* msg, int line) {
     M5.Lcd.fillRect(0, line * 12, DISPLAY_WIDTH, 12, TFT_BLACK);
     M5.Lcd.setCursor(0, line * 12);
@@ -451,7 +527,6 @@ static bool createTaskChecked(TaskFunction_t taskFn, const char* name,
     return true;
 }
 
-// ==================== Setup ====================
 void setup() {
     Serial.begin(115200);
     unsigned long serialWaitStart = millis();
@@ -460,7 +535,6 @@ void setup() {
     }
     Serial.println("\n\n=== CoreS3 AI Pet Boot ===");
 
-    // Step 1: Init display
     auto cfg = M5.config();
     cfg.output_power = true;
     M5.begin(cfg);
@@ -480,60 +554,57 @@ void setup() {
                   ESP.getFreeHeap(), ESP.getFreePsram(), ESP.getPsramSize());
     delay(200);
 
-    // Step 2: AppState
     bootStep("AppState", 1);
     AppState::instance().registerCallback(stateChangeHandler);
 
-    // Step 3: FaceUI (sprite creation - 150KB, needs PSRAM)
     bootStep("FaceUI sprite...", 2);
     bool faceUiOk = gFaceUI.begin();
     bootStep(faceUiOk ? "FaceUI OK" : "FaceUI FAIL", 2);
 
-    // Step 4: MenuUI
     bootStep("MenuUI...", 3);
     gMenuUI.begin();
     bootStep("MenuUI OK", 3);
 
-    // Step 5: Camera debug UI
     bootStep("CameraDebugUI...", 4);
     gCameraDebugUI.begin();
 
-    // Step 6: Pomodoro UI
     bootStep("PomodoroUI...", 5);
     gPomodoroUI.begin();
 
-    // Step 7: CameraManager
-    bootStep("Camera deferred", 6);
+    bootStep("WifiManager...", 6);
+    gWifiManager.begin();
+    bootStep(gWifiManager.isConfigured() ? "WiFi configured" : "WiFi not configured", 6);
+
+    bootStep("StorageManager...", 7);
+    bool sdOk = gStorageManager.begin();
+    bootStep(sdOk ? "SD ready" : "SD not found", 7);
+
+    bootStep("Camera deferred", 8);
     if (CAMERA_INIT_ON_BOOT) {
         bool camOk = gCameraManager.begin();
         gCameraManager.stopCapture();
-        bootStep(camOk ? "Camera OK" : "Camera FAIL (non-fatal)", 6);
+        bootStep(camOk ? "Camera OK" : "Camera FAIL (non-fatal)", 8);
     }
 
-    // Step 8: FaceDetector
-    bootStep("FaceDetector...", 7);
+    bootStep("FaceDetector...", 9);
     gFaceDetector.begin();
-    bootStep("FaceDetector OK", 7);
+    bootStep("FaceDetector OK", 9);
 
-    // Step 9: AI client
-    bootStep("XiaoZhiClient...", 8);
+    bootStep("XiaoZhiClient...", 10);
     gXiaoZhiClient.begin();
     gXiaoZhiClient.setStateCallback(aiStateHandler);
-    bootStep("XiaoZhiClient OK", 8);
+    bootStep("XiaoZhiClient OK", 10);
 
-    // Step 10: Power
-    bootStep("PowerManager...", 9);
+    bootStep("PowerManager...", 11);
     gPowerManager.begin();
     gPowerManager.setLowBatteryCallback(lowBatteryHandler);
-    bootStep("PowerManager OK", 9);
+    bootStep("PowerManager OK", 11);
 
-    // Step 11: EventBus
-    bootStep("EventBus...", 10);
+    bootStep("EventBus...", 12);
     EventBus::instance().subscribe(EventType::FACE_DETECTED, handleEvent);
     EventBus::instance().subscribe(EventType::FACE_LOST, handleEvent);
 
-    // Step 12: Create tasks (with delay between each for scheduler stability)
-    bootStep("Creating tasks...", 11);
+    bootStep("Creating tasks...", 13);
     createTaskChecked(uiTask, "UI", UI_TASK_STACK_SIZE, UI_TASK_PRIORITY, &uiTaskHandle, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
     createTaskChecked(touchTask, "Touch", TOUCH_TASK_STACK_SIZE, TOUCH_TASK_PRIORITY, &touchTaskHandle, 1);
@@ -546,19 +617,19 @@ void setup() {
     vTaskDelay(pdMS_TO_TICKS(50));
     createTaskChecked(powerTask, "Power", POWER_TASK_STACK_SIZE, POWER_TASK_PRIORITY, &powerTaskHandle, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
+    createTaskChecked(networkTask, "Network", NETWORK_TASK_STACK_SIZE, NETWORK_TASK_PRIORITY, &networkTaskHandle, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));
     Serial.println("Setup complete!");
 }
 
-// ==================== Main Loop ====================
 void loop() {
-    // loop() runs as a low-priority task on core 1
-    // All heavy work is done in FreeRTOS tasks
     static unsigned long lastHeartbeat = 0;
     if (SERIAL_DIAGNOSTIC_HEARTBEAT && millis() - lastHeartbeat >= SERIAL_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = millis();
-        Serial.printf("Alive: heap=%u, psram=%u, state=%d, camera=%d\n",
+        Serial.printf("Alive: heap=%u, psram=%u, state=%d, wifi=%d, camera=%d\n",
                       ESP.getFreeHeap(), ESP.getFreePsram(),
                       static_cast<int>(AppState::instance().getState()),
+                      gWifiManager.isConnected() ? 1 : 0,
                       gCameraManager.isRunning() ? 1 : 0);
     }
     vTaskDelay(pdMS_TO_TICKS(100));

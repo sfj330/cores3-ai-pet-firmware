@@ -3,15 +3,21 @@
 #include <M5CoreS3.h>
 #include <cmath>
 
-PomodoroUI::PomodoroUI() = default;
+PomodoroUI::PomodoroUI() : canvas_(&M5.Lcd) {}
 
 void PomodoroUI::begin() {
-    // No special init needed
+    canvas_.setPsram(true);
+    canvas_.setColorDepth(16);
+    spriteReady_ = canvas_.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT) != nullptr;
+    if (spriteReady_) {
+        canvas_.fillSprite(TFT_BLACK);
+    }
 }
 
 void PomodoroUI::show() {
     visible_ = true;
     reset();
+    dirty_ = true;
 }
 
 void PomodoroUI::hide() {
@@ -31,6 +37,7 @@ void PomodoroUI::startFocus() {
     elapsed_ = 0;
     lastTick_ = millis();
     paused_ = false;
+    dirty_ = true;
 }
 
 void PomodoroUI::startBreak() {
@@ -38,16 +45,19 @@ void PomodoroUI::startBreak() {
     elapsed_ = 0;
     lastTick_ = millis();
     paused_ = false;
+    dirty_ = true;
 }
 
 void PomodoroUI::pause() {
     paused_ = true;
+    dirty_ = true;
 }
 
 void PomodoroUI::reset() {
     state_ = PomodoroState::IDLE;
     elapsed_ = 0;
     paused_ = false;
+    dirty_ = true;
 }
 
 void PomodoroUI::togglePause() {
@@ -60,15 +70,31 @@ void PomodoroUI::togglePause() {
         if (!paused_) {
             lastTick_ = millis();
         }
+        dirty_ = true;
     }
 }
 
+void PomodoroUI::markDirty() {
+    dirty_ = true;
+}
+
+PomoHitZone PomodoroUI::hitTest(int x, int y) const {
+    if (x >= BACK_X && x < BACK_X + BACK_W && y >= BACK_Y && y < BACK_Y + BACK_H) {
+        return PomoHitZone::POMO_HIT_BACK;
+    }
+    if (y >= BTN_Y && y < BTN_Y + BTN_H) {
+        if (x >= BTN_START_X && x < BTN_START_X + BTN_W) return PomoHitZone::POMO_HIT_START;
+        if (x >= BTN_RESET_X && x < BTN_RESET_X + BTN_W) return PomoHitZone::POMO_HIT_RESET;
+        if (x >= BTN_SKIP_X && x < BTN_SKIP_X + BTN_W) return PomoHitZone::POMO_HIT_SKIP;
+    }
+    return PomoHitZone::POMO_HIT_NONE;
+}
+
 void PomodoroUI::update() {
-    if (!visible_) return;
+    if (!visible_ || !spriteReady_) return;
 
     unsigned long now = millis();
 
-    // Update timer
     if (!paused_ && (state_ == PomodoroState::FOCUS || state_ == PomodoroState::BREAK)) {
         elapsed_ += now - lastTick_;
         lastTick_ = now;
@@ -79,18 +105,17 @@ void PomodoroUI::update() {
             state_ = PomodoroState::RINGING;
             ringStart_ = now;
             elapsed_ = duration;
+            dirty_ = true;
         }
     }
 
-    // Ringing timeout
     if (state_ == PomodoroState::RINGING && (now - ringStart_ > POMODORO_RING_MS)) {
-        // Auto-switch
-        // If was focus, go to break. If was break, go back to idle.
-        // We determine context by what just finished
         reset();
     }
 
-    M5.Lcd.fillScreen(TFT_BLACK);
+    if (!dirty_ && (now - lastDrawTime_ < REDRAW_INTERVAL_MS)) return;
+
+    canvas_.fillSprite(TFT_BLACK);
     drawTimer();
     drawProgressRing();
     drawControls();
@@ -99,6 +124,10 @@ void PomodoroUI::update() {
     if (state_ == PomodoroState::RINGING) {
         drawNotification();
     }
+
+    canvas_.pushSprite(0, 0);
+    lastDrawTime_ = now;
+    dirty_ = false;
 }
 
 void PomodoroUI::drawTimer() {
@@ -113,20 +142,18 @@ void PomodoroUI::drawTimer() {
     int minutes = (remaining / 60000) % 60;
     int seconds = (remaining / 1000) % 60;
 
-    // Large timer text
-    M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Lcd.setTextSize(4);
-    M5.Lcd.setCursor(DISPLAY_WIDTH / 2 - 70, 30);
-    M5.Lcd.printf("%02d:%02d", minutes, seconds);
+    canvas_.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas_.setTextSize(4);
+    canvas_.setCursor(DISPLAY_WIDTH / 2 - 70, 30);
+    canvas_.printf("%02d:%02d", minutes, seconds);
 
-    // State label
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(DISPLAY_WIDTH / 2 - 30, 80);
+    canvas_.setTextSize(1);
+    canvas_.setCursor(DISPLAY_WIDTH / 2 - 30, 80);
     switch (state_) {
-        case PomodoroState::FOCUS: M5.Lcd.print("FOCUS"); break;
-        case PomodoroState::BREAK: M5.Lcd.print("BREAK"); break;
-        case PomodoroState::RINGING: M5.Lcd.print("TIME'S UP!"); break;
-        default: M5.Lcd.print("READY"); break;
+        case PomodoroState::FOCUS: canvas_.print("FOCUS"); break;
+        case PomodoroState::BREAK: canvas_.print("BREAK"); break;
+        case PomodoroState::RINGING: canvas_.print("TIME'S UP!"); break;
+        default: canvas_.print("READY"); break;
     }
 }
 
@@ -145,10 +172,8 @@ void PomodoroUI::drawProgressRing() {
     float progress = (duration > 0) ? (float)elapsed_ / duration : 0.0f;
     if (progress > 1.0f) progress = 1.0f;
 
-    // Draw background arc
-    M5.Lcd.drawCircle(cx, cy, r, TFT_DARKGREY);
+    canvas_.drawCircle(cx, cy, r, TFT_DARKGREY);
 
-    // Draw progress arc (simple: draw segments)
     int segments = 36;
     uint16_t progressColor = (state_ == PomodoroState::BREAK) ? TFT_GREEN : TFT_ORANGE;
     for (int i = 0; i < segments; ++i) {
@@ -159,59 +184,49 @@ void PomodoroUI::drawProgressRing() {
             int y1 = cy + (int)((r - 2) * sin(angle));
             int x2 = cx + (int)((r - 2) * cos(endAngle));
             int y2 = cy + (int)((r - 2) * sin(endAngle));
-            M5.Lcd.drawLine(x1, y1, x2, y2, progressColor);
+            canvas_.drawLine(x1, y1, x2, y2, progressColor);
         }
     }
 }
 
 void PomodoroUI::drawControls() {
-    int btnY = 130;
-    int btnW = 60;
-    int btnH = 30;
-    int spacing = 15;
-    int totalW = btnW * 3 + spacing * 2;
-    int startX = DISPLAY_WIDTH / 2 - totalW / 2;
+    canvas_.setTextSize(1);
 
-    M5.Lcd.setTextSize(1);
-
-    // Start / Pause button
-    int x = startX;
+    int x = BTN_START_X;
     uint16_t btnColor = (state_ == PomodoroState::IDLE || paused_) ? TFT_GREEN : TFT_ORANGE;
     const char* label = (state_ == PomodoroState::IDLE || paused_) ? "Start" : "Pause";
-    M5.Lcd.fillRoundRect(x, btnY, btnW, btnH, 4, btnColor);
-    M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.setCursor(x + 10, btnY + 8);
-    M5.Lcd.print(label);
+    canvas_.fillRoundRect(x, BTN_Y, BTN_W, BTN_H, 4, btnColor);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setCursor(x + 10, BTN_Y + 8);
+    canvas_.print(label);
 
-    // Reset button
-    x += btnW + spacing;
-    M5.Lcd.fillRoundRect(x, btnY, btnW, btnH, 4, TFT_RED);
-    M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.setCursor(x + 12, btnY + 8);
-    M5.Lcd.print("Reset");
+    x = BTN_RESET_X;
+    canvas_.fillRoundRect(x, BTN_Y, BTN_W, BTN_H, 4, TFT_RED);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setCursor(x + 12, BTN_Y + 8);
+    canvas_.print("Reset");
 
-    // Skip / Switch button
-    x += btnW + spacing;
-    M5.Lcd.fillRoundRect(x, btnY, btnW, btnH, 4, TFT_BLUE);
-    M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.setCursor(x + 8, btnY + 8);
-    M5.Lcd.print("Skip");
+    x = BTN_SKIP_X;
+    canvas_.fillRoundRect(x, BTN_Y, BTN_W, BTN_H, 4, TFT_BLUE);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setCursor(x + 8, BTN_Y + 8);
+    canvas_.print("Skip");
 }
 
 void PomodoroUI::drawBackButton() {
-    // Back arrow
-    M5.Lcd.fillTriangle(20, 20, 30, 10, 30, 30, TFT_WHITE);
-    M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(35, 16);
-    M5.Lcd.print("Back");
+    canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, TFT_DARKGREY);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setTextSize(1);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.setCursor(BACK_X + BACK_W / 2 - 16, BACK_Y + BACK_H / 2 - 4);
+    canvas_.print("Back");
+    canvas_.setTextDatum(TL_DATUM);
 }
 
 void PomodoroUI::drawNotification() {
-    // Non-blocking notification overlay when time is up
-    M5.Lcd.fillRect(DISPLAY_WIDTH / 2 - 90, DISPLAY_HEIGHT / 2 - 30, 180, 60, TFT_GREEN);
-    M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.setTextSize(3);
-    M5.Lcd.setCursor(DISPLAY_WIDTH / 2 - 70, DISPLAY_HEIGHT / 2 - 15);
-    M5.Lcd.print("TIME'S UP!");
+    canvas_.fillRect(DISPLAY_WIDTH / 2 - 90, DISPLAY_HEIGHT / 2 - 30, 180, 60, TFT_GREEN);
+    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setTextSize(3);
+    canvas_.setCursor(DISPLAY_WIDTH / 2 - 70, DISPLAY_HEIGHT / 2 - 15);
+    canvas_.print("TIME'S UP!");
 }

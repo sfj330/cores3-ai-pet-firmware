@@ -3,6 +3,14 @@
 #include <M5CoreS3.h>
 #include <cmath>
 
+static constexpr int BIG_EYE_W = 50;
+static constexpr int BIG_EYE_H = 58;
+static constexpr int BIG_PUPIL_R = 12;
+static constexpr int BIG_SPACING = 70;
+static constexpr int BIG_GAZE_MAX = 14;
+static constexpr int BIG_BROW_W = 44;
+static constexpr int BIG_MOUTH_W = 36;
+
 FaceUI::FaceUI() : canvas_(&M5.Lcd) {}
 
 bool FaceUI::begin() {
@@ -47,7 +55,6 @@ void FaceUI::update() {
     updateSpeakingAnimation();
     drawFace();
 
-    // Push the complete sprite to the display in one operation (no flicker)
     canvas_.pushSprite(0, 0);
 }
 
@@ -71,11 +78,10 @@ void FaceUI::updateGaze() {
 }
 
 void FaceUI::updateSpeakingAnimation() {
-    if (speakingMouthOpen_ || currentEmotion_ == 4) { // SPEAKING = 4
+    if (speakingMouthOpen_ || currentEmotion_ == 4) {
         unsigned long now = millis();
         if (now - lastSpeakAnimTime_ > SPEAK_ANIM_INTERVAL) {
             lastSpeakAnimTime_ = now;
-            // Random mouth open amount for speaking animation
             mouthOpenAmount_ = random(MOUTH_OPEN_MIN, MOUTH_OPEN_MAX) / (float)MOUTH_OPEN_MAX;
         }
     } else {
@@ -97,183 +103,228 @@ void FaceUI::drawFace() {
 
 void FaceUI::drawEyes(int cx, int cy) {
     int eyeY = cy + EYE_Y_OFFSET;
-    int leftEyeX = cx - EYE_SPACING / 2;
-    int rightEyeX = cx + EYE_SPACING / 2;
+    int leftEyeX = cx - BIG_SPACING / 2;
+    int rightEyeX = cx + BIG_SPACING / 2;
 
-    // Gaze offset in pixels
-    int pupilDx = (int)(gazeX_ * GAZE_MAX_OFFSET);
-    int pupilDy = (int)(gazeY_ * GAZE_MAX_OFFSET);
+    int pupilDx = (int)(gazeX_ * BIG_GAZE_MAX);
+    int pupilDy = (int)(gazeY_ * BIG_GAZE_MAX);
 
-    // Eye size modifiers per emotion
-    int eyeW = EYE_WIDTH;
-    int eyeH = EYE_HEIGHT;
-    int pupilR = PUPIL_RADIUS;
+    int eyeW = BIG_EYE_W;
+    int eyeH = BIG_EYE_H;
+    int pupilR = BIG_PUPIL_R;
+
+    bool drawArcEyes = false;
+    int arcDir = 0;
 
     switch (currentEmotion_) {
-        case 1: // HAPPY — squinted
-            eyeH = EYE_HEIGHT * 2 / 3;
+        case 1:
+            eyeH = BIG_EYE_H * 2 / 3;
+            drawArcEyes = true;
+            arcDir = 1;
             break;
-        case 2: // CURIOUS — wide
-            eyeW = EYE_WIDTH + 4;
-            eyeH = EYE_HEIGHT + 4;
+        case 2:
+            eyeW = BIG_EYE_W + 6;
+            eyeH = BIG_EYE_H + 6;
+            pupilR = BIG_PUPIL_R + 2;
             break;
-        case 5: // SPEAKING — normal
+        case 4:
+            pupilDx += 4;
+            pupilDy -= 4;
             break;
-        case 6: // SURPRISED — very wide
-            eyeW = EYE_WIDTH + 8;
-            eyeH = EYE_HEIGHT + 8;
+        case 5:
             break;
-        case 7: // SLEEPY — half closed
-            eyeH = EYE_HEIGHT / 3;
+        case 6:
+            eyeW = BIG_EYE_W + 10;
+            eyeH = BIG_EYE_H + 10;
+            pupilR = BIG_PUPIL_R - 2;
+            break;
+        case 7:
+            eyeH = BIG_EYE_H / 3;
             pupilR = 0;
             break;
-        default: // NORMAL, LISTENING, THINKING, TRACKING
-            break;
-    }
-
-    // Blink override
-    if (isBlinking_) {
-        eyeH = 2;
-        pupilR = 0;
-    }
-
-    // Draw sclera (white of the eye)
-    canvas_.fillCircle(leftEyeX, eyeY, eyeW / 2, TFT_WHITE);
-    canvas_.fillCircle(rightEyeX, eyeY, eyeW / 2, TFT_WHITE);
-
-    // Draw pupils
-    if (pupilR > 0) {
-        int lPupilX = leftEyeX + pupilDx;
-        int rPupilX = rightEyeX + pupilDx;
-        int pupilY = eyeY + pupilDy;
-
-        // Clamp pupils within eye
-        int maxPupilMove = eyeW / 2 - pupilR - 2;
-        lPupilX = constrain(lPupilX, leftEyeX - maxPupilMove, leftEyeX + maxPupilMove);
-        rPupilX = constrain(rPupilX, rightEyeX - maxPupilMove, rightEyeX + maxPupilMove);
-        pupilY = constrain(pupilY, eyeY - maxPupilMove, eyeY + maxPupilMove);
-
-        canvas_.fillCircle(lPupilX, pupilY, pupilR, TFT_BLACK);
-        canvas_.fillCircle(rPupilX, pupilY, pupilR, TFT_BLACK);
-
-        // Eye highlights
-        canvas_.fillCircle(lPupilX - 2, pupilY - 2, 2, TFT_WHITE);
-        canvas_.fillCircle(rPupilX - 2, pupilY - 2, 2, TFT_WHITE);
-
-        // Draw eyelid lines on top
-        canvas_.drawFastHLine(leftEyeX - eyeW / 2, eyeY - eyeH / 2, eyeW, TFT_DARKGREY);
-        canvas_.drawFastHLine(rightEyeX - eyeW / 2, eyeY - eyeH / 2, eyeW, TFT_DARKGREY);
-    }
-
-    // Eyelid lines for SLEEPY
-    if (currentEmotion_ == 7) {
-        canvas_.drawFastHLine(leftEyeX - eyeW / 2, eyeY, eyeW, TFT_DARKGREY);
-        canvas_.drawFastHLine(rightEyeX - eyeW / 2, eyeY, eyeW, TFT_DARKGREY);
-    }
-}
-
-void FaceUI::drawEyebrows(int cx, int cy) {
-    int browY = cy + BROW_Y_OFFSET;
-    int leftBrowX = cx - EYE_SPACING / 2;
-    int rightBrowX = cx + EYE_SPACING / 2;
-
-    int lx1 = leftBrowX - BROW_WIDTH / 2;
-    int lx2 = leftBrowX + BROW_WIDTH / 2;
-    int rx1 = rightBrowX - BROW_WIDTH / 2;
-    int rx2 = rightBrowX + BROW_WIDTH / 2;
-
-    int ly = browY;
-    int ry = browY;
-
-    switch (currentEmotion_) {
-        case 0: // NORMAL — flat
-            break;
-        case 1: // HAPPY — raised
-            ly -= 4; ry -= 4;
-            break;
-        case 2: // CURIOUS — one raised
-            ly -= 6; // left raised
-            break;
-        case 3: // LISTENING — neutral
-            break;
-        case 4: // THINKING — knit (angled down inward)
-            lx1 = leftBrowX; lx2 = leftBrowX - BROW_WIDTH / 2;
-            rx1 = rightBrowX; rx2 = rightBrowX + BROW_WIDTH / 2;
-            ly += 2;
-            break;
-        case 5: // SPEAKING — moving
-            ly += sin(millis() / 200.0f) * 2;
-            ry += sin(millis() / 200.0f + 1.0f) * 2;
-            break;
-        case 6: // SURPRISED — very raised
-            ly -= 8; ry -= 8;
-            break;
-        case 7: // SLEEPY — lowered
-            ly += 6; ry += 6;
+        case 8:
+            pupilR = BIG_PUPIL_R + 1;
             break;
         default:
             break;
     }
 
-    canvas_.drawLine(lx1, ly, lx2, ly, TFT_BLACK);
-    canvas_.drawLine(rx1, ry, rx2, ry, TFT_BLACK);
+    if (isBlinking_) {
+        eyeH = 3;
+        pupilR = 0;
+        drawArcEyes = false;
+    }
+
+    canvas_.fillCircle(leftEyeX, eyeY, eyeW / 2, TFT_WHITE);
+    canvas_.fillCircle(rightEyeX, eyeY, eyeW / 2, TFT_WHITE);
+
+    if (eyeH < eyeW) {
+        int clipH = (eyeW - eyeH) / 2 + 2;
+        canvas_.fillRect(leftEyeX - eyeW / 2 - 1, eyeY - eyeW / 2 - 1, eyeW + 2, clipH, TFT_BLACK);
+        canvas_.fillRect(leftEyeX - eyeW / 2 - 1, eyeY + eyeW / 2 - clipH + 1, eyeW + 2, clipH, TFT_BLACK);
+        canvas_.fillRect(rightEyeX - eyeW / 2 - 1, eyeY - eyeW / 2 - 1, eyeW + 2, clipH, TFT_BLACK);
+        canvas_.fillRect(rightEyeX - eyeW / 2 - 1, eyeY + eyeW / 2 - clipH + 1, eyeW + 2, clipH, TFT_BLACK);
+    }
+
+    if (pupilR > 0) {
+        int lPupilX = leftEyeX + pupilDx;
+        int rPupilX = rightEyeX + pupilDx;
+        int pupilY = eyeY + pupilDy;
+
+        int maxPupilMove = eyeW / 2 - pupilR - 2;
+        lPupilX = constrain(lPupilX, leftEyeX - maxPupilMove, leftEyeX + maxPupilMove);
+        rPupilX = constrain(rPupilX, rightEyeX - maxPupilMove, rightEyeX + maxPupilMove);
+        pupilY = constrain(pupilY, eyeY - maxPupilMove, eyeY + maxPupilMove);
+
+        canvas_.fillCircle(lPupilX, pupilY, pupilR + 3, 0x4208);
+        canvas_.fillCircle(rPupilX, pupilY, pupilR + 3, 0x4208);
+
+        canvas_.fillCircle(lPupilX, pupilY, pupilR, TFT_BLACK);
+        canvas_.fillCircle(rPupilX, pupilY, pupilR, TFT_BLACK);
+
+        canvas_.fillCircle(lPupilX - pupilR / 2, pupilY - pupilR / 2, pupilR / 3, TFT_WHITE);
+        canvas_.fillCircle(rPupilX - pupilR / 2, pupilY - pupilR / 2, pupilR / 3, TFT_WHITE);
+
+        canvas_.fillCircle(lPupilX + pupilR / 3, pupilY + pupilR / 3, pupilR / 5, 0xD69A);
+        canvas_.fillCircle(rPupilX + pupilR / 3, pupilY + pupilR / 3, pupilR / 5, 0xD69A);
+    }
+
+    if (drawArcEyes && !isBlinking_) {
+        canvas_.fillCircle(leftEyeX, eyeY, eyeW / 2, TFT_BLACK);
+        canvas_.fillCircle(rightEyeX, eyeY, eyeW / 2, TFT_BLACK);
+        int arcW = eyeW * 3 / 4;
+        for (int i = -arcW; i <= arcW; ++i) {
+            int yOff = (i * i) / (arcW * 2) + 2;
+            canvas_.drawPixel(leftEyeX + i, eyeY - eyeH / 4 + yOff, TFT_WHITE);
+            canvas_.drawPixel(rightEyeX + i, eyeY - eyeH / 4 + yOff, TFT_WHITE);
+        }
+    }
+
+    if (currentEmotion_ == 7 && !isBlinking_) {
+        canvas_.drawFastHLine(leftEyeX - eyeW / 2, eyeY, eyeW, 0x8410);
+        canvas_.drawFastHLine(rightEyeX - eyeW / 2, eyeY, eyeW, 0x8410);
+    }
+}
+
+void FaceUI::drawEyebrows(int cx, int cy) {
+    int browY = cy + BROW_Y_OFFSET;
+    int leftBrowX = cx - BIG_SPACING / 2;
+    int rightBrowX = cx + BIG_SPACING / 2;
+
+    int lx1 = leftBrowX - BIG_BROW_W / 2;
+    int lx2 = leftBrowX + BIG_BROW_W / 2;
+    int rx1 = rightBrowX - BIG_BROW_W / 2;
+    int rx2 = rightBrowX + BIG_BROW_W / 2;
+
+    int ly = browY;
+    int ry = browY;
+    int thickness = 3;
+
+    switch (currentEmotion_) {
+        case 0:
+            break;
+        case 1:
+            ly -= 5; ry -= 5;
+            break;
+        case 2:
+            ly -= 8;
+            break;
+        case 3:
+            ly -= 2; ry -= 2;
+            break;
+        case 4:
+            lx1 = leftBrowX; lx2 = leftBrowX - BIG_BROW_W / 2;
+            rx1 = rightBrowX; rx2 = rightBrowX + BIG_BROW_W / 2;
+            ly += 3; ry += 3;
+            break;
+        case 5:
+            ly += sin(millis() / 200.0f) * 2;
+            ry += sin(millis() / 200.0f + 1.0f) * 2;
+            break;
+        case 6:
+            ly -= 10; ry -= 10;
+            thickness = 4;
+            break;
+        case 7:
+            ly += 8; ry += 8;
+            break;
+        default:
+            break;
+    }
+
+    for (int t = 0; t < thickness; ++t) {
+        canvas_.drawLine(lx1, ly + t, lx2, ly + t, TFT_WHITE);
+        canvas_.drawLine(rx1, ry + t, rx2, ry + t, TFT_WHITE);
+    }
 }
 
 void FaceUI::drawMouth(int cx, int cy) {
     int mouthY = cy + MOUTH_Y_OFFSET;
 
-    // Mouth shape varies by emotion and speaking state
     switch (currentEmotion_) {
-        case 0: // NORMAL — small straight line
-            canvas_.drawFastHLine(cx - MOUTH_WIDTH / 2, mouthY, MOUTH_WIDTH, TFT_BLACK);
+        case 0:
+            canvas_.drawFastHLine(cx - BIG_MOUTH_W / 2, mouthY, BIG_MOUTH_W, TFT_WHITE);
             break;
-        case 1: // HAPPY — big upward arc
-            canvas_.fillCircle(cx, mouthY, MOUTH_WIDTH / 2, TFT_BLACK);
-            canvas_.fillRect(cx - MOUTH_WIDTH / 2, mouthY, MOUTH_WIDTH, MOUTH_WIDTH / 2, TFT_BLACK);
-            break;
-        case 2: // CURIOUS — small O shape
-            canvas_.drawCircle(cx, mouthY, 5, TFT_BLACK);
-            break;
-        case 3: // LISTENING — slight smile
+        case 1:
             {
-                int smW = MOUTH_WIDTH / 2;
+                int smW = BIG_MOUTH_W / 2;
                 for (int i = -smW; i <= smW; ++i) {
-                    int yOff = (i * i) / (smW * 2) + 2;
-                    canvas_.drawPixel(cx + i, mouthY + yOff, TFT_BLACK);
+                    int yOff = -(i * i) / (smW * 2) + smW / 2;
+                    for (int t = 0; t < 3; ++t) {
+                        canvas_.drawPixel(cx + i, mouthY + yOff + t, TFT_WHITE);
+                    }
                 }
             }
             break;
-        case 4: // THINKING — pursed lip
-            canvas_.drawCircle(cx, mouthY, 4, TFT_BLACK);
+        case 2:
+            canvas_.drawCircle(cx, mouthY, 7, TFT_WHITE);
+            canvas_.drawCircle(cx, mouthY, 5, TFT_WHITE);
             break;
-        case 5: // SPEAKING — animated open/close
+        case 3:
             {
-                int openH = (int)(mouthOpenAmount_ * MOUTH_OPEN_MAX);
-                canvas_.fillCircle(cx, mouthY - openH / 2, MOUTH_WIDTH / 4, TFT_BLACK);
-                canvas_.fillCircle(cx, mouthY + openH / 2, MOUTH_WIDTH / 4, TFT_BLACK);
-                canvas_.fillRect(cx - MOUTH_WIDTH / 4, mouthY - openH / 2, MOUTH_WIDTH / 2, openH, TFT_BLACK);
+                int smW = BIG_MOUTH_W / 2;
+                for (int i = -smW; i <= smW; ++i) {
+                    int yOff = (i * i) / (smW * 3) + 2;
+                    canvas_.drawPixel(cx + i, mouthY + yOff, TFT_WHITE);
+                }
             }
             break;
-        case 6: // SURPRISED — big O shape
-            canvas_.fillCircle(cx, mouthY, MOUTH_WIDTH / 3, TFT_BLACK);
+        case 4:
+            canvas_.fillCircle(cx + 4, mouthY, 5, TFT_WHITE);
             break;
-        case 7: // SLEEPY — relaxed line
-            canvas_.drawFastHLine(cx - MOUTH_WIDTH / 3, mouthY, MOUTH_WIDTH * 2 / 3, TFT_DARKGREY);
+        case 5:
+            {
+                int openH = (int)(mouthOpenAmount_ * MOUTH_OPEN_MAX);
+                if (openH < 2) openH = 2;
+                canvas_.fillRoundRect(cx - BIG_MOUTH_W / 4, mouthY - openH / 2,
+                                      BIG_MOUTH_W / 2, openH, 4, TFT_WHITE);
+            }
             break;
-        default: // TRACKING — neutral
-            canvas_.drawFastHLine(cx - MOUTH_WIDTH / 2, mouthY, MOUTH_WIDTH, TFT_BLACK);
+        case 6:
+            canvas_.fillCircle(cx, mouthY, BIG_MOUTH_W / 3, TFT_WHITE);
+            canvas_.fillCircle(cx, mouthY, BIG_MOUTH_W / 3 - 4, TFT_BLACK);
+            break;
+        case 7:
+            {
+                for (int i = -BIG_MOUTH_W / 3; i <= BIG_MOUTH_W / 3; ++i) {
+                    int yOff = (int)(sin(i / 3.0f) * 2);
+                    canvas_.drawPixel(cx + i, mouthY + yOff, 0x8410);
+                }
+            }
+            break;
+        default:
+            canvas_.drawFastHLine(cx - BIG_MOUTH_W / 2, mouthY, BIG_MOUTH_W, TFT_WHITE);
             break;
     }
 }
 
 void FaceUI::drawCheeks(int cx, int cy) {
-    // Draw subtle blush for certain emotions
-    if (currentEmotion_ == 1 || currentEmotion_ == 6) { // HAPPY or SURPRISED
-        int cheekY = cy + EYE_Y_OFFSET + EYE_HEIGHT / 2;
-        int leftCheekX = cx - EYE_SPACING / 2 - EYE_WIDTH / 2 - 8;
-        int rightCheekX = cx + EYE_SPACING / 2 + EYE_WIDTH / 2 + 8;
+    if (currentEmotion_ == 1 || currentEmotion_ == 6) {
+        int cheekY = cy + EYE_Y_OFFSET + BIG_EYE_H / 2;
+        int leftCheekX = cx - BIG_SPACING / 2 - BIG_EYE_W / 2 - 10;
+        int rightCheekX = cx + BIG_SPACING / 2 + BIG_EYE_W / 2 + 10;
 
-        canvas_.fillCircle(leftCheekX, cheekY, 8, TFT_MAROON);
-        canvas_.fillCircle(rightCheekX, cheekY, 8, TFT_MAROON);
+        canvas_.fillCircle(leftCheekX, cheekY, 10, 0x8010);
+        canvas_.fillCircle(rightCheekX, cheekY, 10, 0x8010);
     }
 }
