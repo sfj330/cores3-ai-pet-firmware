@@ -37,7 +37,7 @@ bool XiaoZhiClient::startListening() {
 
     if (!connected_) {
         setState(VoiceState::LISTENING);
-        Serial.println("XiaoZhi: AI not configured (placeholder)");
+        Serial.println("XiaoZhi: device verification required; real service not configured");
         return true;
     }
 

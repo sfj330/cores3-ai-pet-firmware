@@ -119,7 +119,12 @@ void CameraDebugUI::drawShotButton() {
     canvas_.setTextColor(TFT_WHITE);
     canvas_.setTextSize(2);
     canvas_.setTextDatum(MC_DATUM);
-    canvas_.setCursor(SHOT_X + SHOT_W / 2 - 16, SHOT_Y + SHOT_H / 2 - 6);
-    canvas_.print("SHOT");
+    int textX = SHOT_X + SHOT_W / 2;
+    int textStartY = SHOT_Y + SHOT_H / 2 - 24;
+    const char letters[] = "SHOT";
+    for (int i = 0; i < 4; ++i) {
+        canvas_.setCursor(textX - 6, textStartY + i * 16);
+        canvas_.print(letters[i]);
+    }
     canvas_.setTextDatum(TL_DATUM);
 }

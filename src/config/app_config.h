@@ -46,7 +46,9 @@ constexpr int TAP_THRESHOLD_MS = 200;           // Max touch duration for a tap
 constexpr int LONG_PRESS_THRESHOLD_MS = 800;    // Min hold for long press
 constexpr int DOUBLE_TAP_WINDOW_MS = 300;       // Max gap between two taps
 constexpr int SWIPE_THRESHOLD_PX = 60;          // Min distance for swipe
+constexpr int RELAXED_SWIPE_THRESHOLD_PX = 42;  // Practical CoreS3 swipe distance
 constexpr int MOVE_THRESHOLD_PX = 20;           // Max movement for tap detection
+constexpr bool GESTURE_DEBUG_LOG = false;
 
 constexpr int TOUCH_SAMPLING_HZ = 50;
 
@@ -61,8 +63,9 @@ constexpr int CAMERA_JPEG_QUALITY = 85;
 constexpr int DETECTION_FRAME_WIDTH = CAMERA_FRAME_WIDTH;
 constexpr int DETECTION_FRAME_HEIGHT = CAMERA_FRAME_HEIGHT;
 constexpr int DETECTION_FPS = 5;
-constexpr bool FACE_DETECTION_ENABLED_ON_BOOT = true;
-constexpr int FACE_TRACKING_TIMEOUT_MS = 3000;  // No face → NORMAL after this
+constexpr bool FACE_DETECTION_ENABLED_ON_BOOT = false;
+constexpr int FACE_TRACKING_TIMEOUT_MS = 3000;  // No face -> NORMAL after this
+constexpr unsigned long SICK_EMOTION_DURATION_MS = 2000;
 
 // ==================== Wi-Fi ====================
 constexpr int WIFI_RECONNECT_INTERVAL_MS = 5000;

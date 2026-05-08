@@ -22,6 +22,7 @@ public:
     int getActiveCard() const;
 
     void setWifiStatus(const char* status, const char* ip);
+    void setVisionStatus(const char* status);
 
     MenuHitZone hitTest(int x, int y) const;
 
@@ -45,6 +46,7 @@ private:
     bool dirty_ = true;
     String wifiStatus_ = "Disconnected";
     String wifiIp_ = "--.--.--.--";
+    String visionStatus_ = "Vision: unknown";
 
     static constexpr int BACK_X = 5;
     static constexpr int BACK_Y = DISPLAY_HEIGHT - 40;

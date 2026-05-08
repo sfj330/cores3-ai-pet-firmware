@@ -44,6 +44,14 @@ void MenuUI::setWifiStatus(const char* status, const char* ip) {
     }
 }
 
+void MenuUI::setVisionStatus(const char* status) {
+    String newStatus = status ? String(status) : String();
+    if (newStatus != visionStatus_) {
+        visionStatus_ = newStatus;
+        dirty_ = true;
+    }
+}
+
 void MenuUI::markDirty() {
     dirty_ = true;
 }
@@ -176,6 +184,9 @@ void MenuUI::drawSystemCard(int x, int y, int w, int h, bool focused) {
     canvas_.print("PSRAM: ");
     canvas_.print(ESP.getFreePsram() / 1024);
     canvas_.print(" KB free");
+
+    canvas_.setCursor(x + 20, y + 115);
+    canvas_.print(visionStatus_);
 }
 
 void MenuUI::drawBackButton() {

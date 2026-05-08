@@ -7,6 +7,7 @@ enum class AppStateEnum {
     MENU,
     CAMERA_DEBUG,
     POMODORO,
+    AI,
     SLEEP
 };
 
@@ -19,7 +20,9 @@ enum class FaceEmotion {
     SPEAKING,
     SURPRISED,
     SLEEPY,
-    TRACKING
+    TRACKING,
+    SHY,
+    SICK
 };
 
 class AppState {

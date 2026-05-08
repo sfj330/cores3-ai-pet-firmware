@@ -47,6 +47,8 @@ bool CameraManager::stopCapture() {
 CameraFrame CameraManager::getDisplayFrame() {
     CameraFrame frame;
     if (!initialized_ || !capturing_) return frame;
+    if (!ensureMutex()) return frame;
+    if (xSemaphoreTake(cameraMutex_, pdMS_TO_TICKS(200)) != pdTRUE) return frame;
 
     if (CoreS3.Camera.get()) {
         frame.data = CoreS3.Camera.fb->buf;
@@ -54,14 +56,30 @@ CameraFrame CameraManager::getDisplayFrame() {
         frame.height = CoreS3.Camera.fb->height;
         frame.size = CoreS3.Camera.fb->len;
         frame.valid = true;
-        CoreS3.Camera.free();
+        frame.locked = true;
+        return frame;
     }
+    xSemaphoreGive(cameraMutex_);
     return frame;
 }
 
 CameraFrame CameraManager::getDetectionFrame() {
     // Returns the same frame — detection resolution is QVGA already
     return getDisplayFrame();
+}
+
+void CameraManager::releaseFrame(CameraFrame& frame) {
+    if (!frame.locked) {
+        frame = CameraFrame{};
+        return;
+    }
+
+    CoreS3.Camera.free();
+    CoreS3.Camera.fb = nullptr;
+    frame = CameraFrame{};
+    if (cameraMutex_ != nullptr) {
+        xSemaphoreGive(cameraMutex_);
+    }
 }
 
 bool CameraManager::isRunning() const {

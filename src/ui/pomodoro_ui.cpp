@@ -5,23 +5,54 @@
 
 PomodoroUI::PomodoroUI() : canvas_(&M5.Lcd) {}
 
-void PomodoroUI::begin() {
+bool PomodoroUI::ensureSprite() {
+    int w = M5.Lcd.width();
+    int h = M5.Lcd.height();
+    if (spriteReady_ && canvas_.width() == w && canvas_.height() == h) {
+        return true;
+    }
+
+    if (spriteReady_) {
+        canvas_.deleteSprite();
+        spriteReady_ = false;
+    }
+
     canvas_.setPsram(true);
     canvas_.setColorDepth(16);
-    spriteReady_ = canvas_.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT) != nullptr;
+    spriteReady_ = canvas_.createSprite(w, h) != nullptr;
     if (spriteReady_) {
         canvas_.fillSprite(TFT_BLACK);
     }
+    dirty_ = true;
+    return spriteReady_;
+}
+
+void PomodoroUI::begin() {
+    baseRotation_ = M5.Lcd.getRotation() & 3;
+    appliedRotation_ = baseRotation_;
+    ensureSprite();
 }
 
 void PomodoroUI::show() {
     visible_ = true;
+    baseRotation_ = M5.Lcd.getRotation() & 3;
+    appliedRotation_ = baseRotation_;
+    currentOrientation_ = PomoOrientation::UNKNOWN;
+    ensureSprite();
     reset();
     dirty_ = true;
 }
 
 void PomodoroUI::hide() {
     visible_ = false;
+    restoreDisplayRotation();
+}
+
+void PomodoroUI::restoreDisplayRotation() {
+    if ((M5.Lcd.getRotation() & 3) != baseRotation_) {
+        M5.Lcd.setRotation(baseRotation_);
+    }
+    appliedRotation_ = baseRotation_;
 }
 
 bool PomodoroUI::isVisible() const {
@@ -32,24 +63,73 @@ PomodoroState PomodoroUI::getState() const {
     return state_;
 }
 
-void PomodoroUI::startFocus() {
-    state_ = PomodoroState::FOCUS;
-    elapsed_ = 0;
-    lastTick_ = millis();
-    paused_ = false;
+int PomodoroUI::getActivePreset() const {
+    return activePreset_;
+}
+
+void PomodoroUI::selectPreset(int index) {
+    if (index >= 0 && index < PRESET_COUNT && index != activePreset_) {
+        activePreset_ = index;
+        if (state_ == PomodoroState::RUNNING) {
+            elapsed_ = 0;
+            lastTick_ = millis();
+        }
+        dirty_ = true;
+    }
+}
+
+uint8_t PomodoroUI::rotationForOrientation(PomoOrientation o) const {
+    uint8_t offset = 0;
+    switch (o) {
+        case PomoOrientation::RIGHT: offset = 1; break;
+        case PomoOrientation::BOTTOM: offset = 2; break;
+        case PomoOrientation::LEFT: offset = 3; break;
+        case PomoOrientation::TOP:
+        default: offset = 0; break;
+    }
+    return (baseRotation_ + offset) & 3;
+}
+
+void PomodoroUI::applyDisplayRotation(PomoOrientation o) {
+    uint8_t nextRotation = rotationForOrientation(o);
+    if (nextRotation != appliedRotation_) {
+        M5.Lcd.setRotation(nextRotation);
+        appliedRotation_ = nextRotation;
+    }
+    ensureSprite();
     dirty_ = true;
 }
 
-void PomodoroUI::startBreak() {
-    state_ = PomodoroState::BREAK;
-    elapsed_ = 0;
-    lastTick_ = millis();
-    paused_ = false;
-    dirty_ = true;
+void PomodoroUI::setOrientation(PomoOrientation o) {
+    if (o == PomoOrientation::UNKNOWN || o == PomoOrientation::FLAT || o == currentOrientation_) {
+        return;
+    }
+
+    currentOrientation_ = o;
+    applyDisplayRotation(o);
+
+    for (int i = 0; i < PRESET_COUNT; ++i) {
+        if (presets_[i].orientation == o) {
+            selectPreset(i);
+            break;
+        }
+    }
 }
 
-void PomodoroUI::pause() {
-    paused_ = true;
+void PomodoroUI::togglePause() {
+    if (state_ == PomodoroState::IDLE) {
+        state_ = PomodoroState::RUNNING;
+        elapsed_ = 0;
+        lastTick_ = millis();
+        paused_ = false;
+    } else if (state_ == PomodoroState::RINGING) {
+        reset();
+    } else {
+        paused_ = !paused_;
+        if (!paused_) {
+            lastTick_ = millis();
+        }
+    }
     dirty_ = true;
 }
 
@@ -60,47 +140,40 @@ void PomodoroUI::reset() {
     dirty_ = true;
 }
 
-void PomodoroUI::togglePause() {
-    if (state_ == PomodoroState::IDLE) {
-        startFocus();
-    } else if (state_ == PomodoroState::RINGING) {
-        reset();
-    } else {
-        paused_ = !paused_;
-        if (!paused_) {
-            lastTick_ = millis();
-        }
-        dirty_ = true;
-    }
-}
-
 void PomodoroUI::markDirty() {
     dirty_ = true;
 }
 
 PomoHitZone PomodoroUI::hitTest(int x, int y) const {
+    int w = M5.Lcd.width();
+    int h = M5.Lcd.height();
+    int btnY = h - 42;
+    int startX = w / 4 - BTN_W / 2;
+    int resetX = (w * 3) / 4 - BTN_W / 2;
+    if (startX < 8) startX = 8;
+    if (resetX + BTN_W > w - 8) resetX = w - BTN_W - 8;
+
     if (x >= BACK_X && x < BACK_X + BACK_W && y >= BACK_Y && y < BACK_Y + BACK_H) {
         return PomoHitZone::POMO_HIT_BACK;
     }
-    if (y >= BTN_Y && y < BTN_Y + BTN_H) {
-        if (x >= BTN_START_X && x < BTN_START_X + BTN_W) return PomoHitZone::POMO_HIT_START;
-        if (x >= BTN_RESET_X && x < BTN_RESET_X + BTN_W) return PomoHitZone::POMO_HIT_RESET;
-        if (x >= BTN_SKIP_X && x < BTN_SKIP_X + BTN_W) return PomoHitZone::POMO_HIT_SKIP;
+    if (y >= btnY && y < btnY + BTN_H) {
+        if (x >= startX && x < startX + BTN_W) return PomoHitZone::POMO_HIT_START;
+        if (x >= resetX && x < resetX + BTN_W) return PomoHitZone::POMO_HIT_RESET;
     }
     return PomoHitZone::POMO_HIT_NONE;
 }
 
 void PomodoroUI::update() {
-    if (!visible_ || !spriteReady_) return;
+    if (!visible_) return;
+    if (!ensureSprite()) return;
 
     unsigned long now = millis();
 
-    if (!paused_ && (state_ == PomodoroState::FOCUS || state_ == PomodoroState::BREAK)) {
+    if (!paused_ && state_ == PomodoroState::RUNNING) {
         elapsed_ += now - lastTick_;
         lastTick_ = now;
 
-        unsigned long duration = (state_ == PomodoroState::FOCUS) ? focusDuration_ : breakDuration_;
-
+        unsigned long duration = presets_[activePreset_].durationMs;
         if (elapsed_ >= duration) {
             state_ = PomodoroState::RINGING;
             ringStart_ = now;
@@ -116,6 +189,7 @@ void PomodoroUI::update() {
     if (!dirty_ && (now - lastDrawTime_ < REDRAW_INTERVAL_MS)) return;
 
     canvas_.fillSprite(TFT_BLACK);
+    drawPresetSelector();
     drawTimer();
     drawProgressRing();
     drawControls();
@@ -130,52 +204,68 @@ void PomodoroUI::update() {
     dirty_ = false;
 }
 
-void PomodoroUI::drawTimer() {
-    unsigned long duration = 0;
-    switch (state_) {
-        case PomodoroState::FOCUS: duration = focusDuration_; break;
-        case PomodoroState::BREAK: duration = breakDuration_; break;
-        default: duration = focusDuration_; break;
-    }
-
-    unsigned long remaining = duration - elapsed_;
-    int minutes = (remaining / 60000) % 60;
-    int seconds = (remaining / 1000) % 60;
-
-    canvas_.setTextColor(TFT_WHITE, TFT_BLACK);
-    canvas_.setTextSize(4);
-    canvas_.setCursor(DISPLAY_WIDTH / 2 - 70, 30);
-    canvas_.printf("%02d:%02d", minutes, seconds);
+void PomodoroUI::drawPresetSelector() {
+    int w = canvas_.width();
+    int boxGap = 6;
+    int boxW = (w - 20 - boxGap * (PRESET_COUNT - 1)) / PRESET_COUNT;
+    if (boxW < 48) boxW = 48;
+    int boxH = 28;
+    int startX = 10;
+    int y = 38;
 
     canvas_.setTextSize(1);
-    canvas_.setCursor(DISPLAY_WIDTH / 2 - 30, 80);
-    switch (state_) {
-        case PomodoroState::FOCUS: canvas_.print("FOCUS"); break;
-        case PomodoroState::BREAK: canvas_.print("BREAK"); break;
-        case PomodoroState::RINGING: canvas_.print("TIME'S UP!"); break;
-        default: canvas_.print("READY"); break;
+    canvas_.setTextDatum(TL_DATUM);
+    for (int i = 0; i < PRESET_COUNT; ++i) {
+        int x = startX + i * (boxW + boxGap);
+        uint16_t bgColor = (i == activePreset_) ? TFT_WHITE : TFT_DARKGREY;
+        uint16_t txtColor = (i == activePreset_) ? TFT_BLACK : TFT_WHITE;
+        canvas_.fillRoundRect(x, y, boxW, boxH, 4, bgColor);
+        canvas_.setTextColor(txtColor, bgColor);
+        canvas_.setCursor(x + 4, y + 10);
+        canvas_.print(presets_[i].label);
     }
 }
 
-void PomodoroUI::drawProgressRing() {
-    int cx = DISPLAY_WIDTH / 2;
-    int cy = 60;
-    int r = 55;
+void PomodoroUI::drawTimer() {
+    int w = canvas_.width();
+    int h = canvas_.height();
+    unsigned long duration = presets_[activePreset_].durationMs;
+    unsigned long remaining = elapsed_ >= duration ? 0 : duration - elapsed_;
+    int minutes = (remaining / 60000) % 60;
+    int seconds = (remaining / 1000) % 60;
+    int timerY = h / 2 - 52;
 
-    unsigned long duration = 0;
+    canvas_.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas_.setTextSize(4);
+    canvas_.setCursor(w / 2 - 70, timerY);
+    canvas_.printf("%02d:%02d", minutes, seconds);
+
+    canvas_.setTextSize(1);
+    canvas_.setCursor(w / 2 - 30, timerY + 45);
     switch (state_) {
-        case PomodoroState::FOCUS: duration = focusDuration_; break;
-        case PomodoroState::BREAK: duration = breakDuration_; break;
-        default: duration = focusDuration_; break;
+        case PomodoroState::RUNNING: canvas_.print(paused_ ? "PAUSED" : "RUNNING"); break;
+        case PomodoroState::RINGING: canvas_.print("TIME'S UP!"); break;
+        default: canvas_.print("READY"); break;
     }
 
+    canvas_.setCursor(w / 2 - 44, timerY + 60);
+    canvas_.print(ImuOrientation::orientationName(currentOrientation_));
+}
+
+void PomodoroUI::drawProgressRing() {
+    int w = canvas_.width();
+    int h = canvas_.height();
+    int cx = w / 2;
+    int cy = h / 2 + 14;
+    int r = 38;
+
+    unsigned long duration = presets_[activePreset_].durationMs;
     float progress = (duration > 0) ? (float)elapsed_ / duration : 0.0f;
     if (progress > 1.0f) progress = 1.0f;
 
     canvas_.drawCircle(cx, cy, r, TFT_DARKGREY);
 
     int segments = 36;
-    uint16_t progressColor = (state_ == PomodoroState::BREAK) ? TFT_GREEN : TFT_ORANGE;
     for (int i = 0; i < segments; ++i) {
         float angle = -PI / 2 + (i / (float)segments) * 2 * PI;
         float endAngle = -PI / 2 + ((i + 1) / (float)segments) * 2 * PI;
@@ -184,38 +274,39 @@ void PomodoroUI::drawProgressRing() {
             int y1 = cy + (int)((r - 2) * sin(angle));
             int x2 = cx + (int)((r - 2) * cos(endAngle));
             int y2 = cy + (int)((r - 2) * sin(endAngle));
-            canvas_.drawLine(x1, y1, x2, y2, progressColor);
+            canvas_.drawLine(x1, y1, x2, y2, TFT_ORANGE);
         }
     }
 }
 
 void PomodoroUI::drawControls() {
-    canvas_.setTextSize(1);
+    int w = canvas_.width();
+    int h = canvas_.height();
+    int btnY = h - 42;
+    int startX = w / 4 - BTN_W / 2;
+    int resetX = (w * 3) / 4 - BTN_W / 2;
+    if (startX < 8) startX = 8;
+    if (resetX + BTN_W > w - 8) resetX = w - BTN_W - 8;
 
-    int x = BTN_START_X;
+    canvas_.setTextSize(1);
+    canvas_.setTextDatum(TL_DATUM);
+
     uint16_t btnColor = (state_ == PomodoroState::IDLE || paused_) ? TFT_GREEN : TFT_ORANGE;
     const char* label = (state_ == PomodoroState::IDLE || paused_) ? "Start" : "Pause";
-    canvas_.fillRoundRect(x, BTN_Y, BTN_W, BTN_H, 4, btnColor);
-    canvas_.setTextColor(TFT_WHITE);
-    canvas_.setCursor(x + 10, BTN_Y + 8);
+    canvas_.fillRoundRect(startX, btnY, BTN_W, BTN_H, 4, btnColor);
+    canvas_.setTextColor(TFT_WHITE, btnColor);
+    canvas_.setCursor(startX + 20, btnY + 8);
     canvas_.print(label);
 
-    x = BTN_RESET_X;
-    canvas_.fillRoundRect(x, BTN_Y, BTN_W, BTN_H, 4, TFT_RED);
-    canvas_.setTextColor(TFT_WHITE);
-    canvas_.setCursor(x + 12, BTN_Y + 8);
+    canvas_.fillRoundRect(resetX, btnY, BTN_W, BTN_H, 4, TFT_RED);
+    canvas_.setTextColor(TFT_WHITE, TFT_RED);
+    canvas_.setCursor(resetX + 16, btnY + 8);
     canvas_.print("Reset");
-
-    x = BTN_SKIP_X;
-    canvas_.fillRoundRect(x, BTN_Y, BTN_W, BTN_H, 4, TFT_BLUE);
-    canvas_.setTextColor(TFT_WHITE);
-    canvas_.setCursor(x + 8, BTN_Y + 8);
-    canvas_.print("Skip");
 }
 
 void PomodoroUI::drawBackButton() {
     canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, TFT_DARKGREY);
-    canvas_.setTextColor(TFT_WHITE);
+    canvas_.setTextColor(TFT_WHITE, TFT_DARKGREY);
     canvas_.setTextSize(1);
     canvas_.setTextDatum(MC_DATUM);
     canvas_.setCursor(BACK_X + BACK_W / 2 - 16, BACK_Y + BACK_H / 2 - 4);
@@ -224,9 +315,11 @@ void PomodoroUI::drawBackButton() {
 }
 
 void PomodoroUI::drawNotification() {
-    canvas_.fillRect(DISPLAY_WIDTH / 2 - 90, DISPLAY_HEIGHT / 2 - 30, 180, 60, TFT_GREEN);
-    canvas_.setTextColor(TFT_WHITE);
+    int w = canvas_.width();
+    int h = canvas_.height();
+    canvas_.fillRect(w / 2 - 90, h / 2 - 30, 180, 60, TFT_GREEN);
+    canvas_.setTextColor(TFT_WHITE, TFT_GREEN);
     canvas_.setTextSize(3);
-    canvas_.setCursor(DISPLAY_WIDTH / 2 - 70, DISPLAY_HEIGHT / 2 - 15);
+    canvas_.setCursor(w / 2 - 70, h / 2 - 15);
     canvas_.print("TIME'S UP!");
 }

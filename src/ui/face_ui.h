@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <Arduino.h>
 #include <M5GFX.h>
 #include "config/app_config.h"
+#include "app/app_state.h"
 
 class FaceUI {
 public:
@@ -11,9 +13,13 @@ public:
     void update();
 
     void setGazeOffset(float dx, float dy);
-    void setExpression(int emotion);
+    void setExpression(FaceEmotion emotion);
     void setSpeakingMouthOpen(bool open);
+    void setAiOverlay(bool visible, const char* status, const char* detail, bool wifiConnected);
+    void setVisionStatus(const char* status);
     void wake();
+
+    void setTemporaryGaze(float dx, float dy, unsigned long durationMs);
 
 private:
     void drawFace();
@@ -21,6 +27,7 @@ private:
     void drawEyebrows(int centerX, int centerY);
     void drawMouth(int centerX, int centerY);
     void drawCheeks(int centerX, int centerY);
+    void drawStatusOverlay();
 
     void updateBlink();
     void updateGaze();
@@ -38,11 +45,22 @@ private:
     float targetGazeX_ = 0.0f;
     float targetGazeY_ = 0.0f;
 
-    int currentEmotion_ = 0;
+    float tempGazeX_ = 0.0f;
+    float tempGazeY_ = 0.0f;
+    bool tempGazeActive_ = false;
+    unsigned long tempGazeEndTime_ = 0;
+
+    FaceEmotion currentEmotion_ = FaceEmotion::NORMAL;
 
     bool speakingMouthOpen_ = false;
     unsigned long lastSpeakAnimTime_ = 0;
     float mouthOpenAmount_ = 0.0f;
+
+    bool aiOverlayVisible_ = false;
+    bool aiWifiConnected_ = false;
+    String aiStatus_;
+    String aiDetail_;
+    String visionStatus_;
 
     bool sleeping_ = false;
     int brightness_ = 255;

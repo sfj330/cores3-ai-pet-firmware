@@ -4,6 +4,27 @@
 
 GestureManager::GestureManager() = default;
 
+static const char* gestureName(GestureType type) {
+    switch (type) {
+        case GestureType::SINGLE_TAP: return "SINGLE_TAP";
+        case GestureType::DOUBLE_TAP: return "DOUBLE_TAP";
+        case GestureType::RIGHT_SWIPE: return "RIGHT_SWIPE";
+        case GestureType::LEFT_SWIPE: return "LEFT_SWIPE";
+        case GestureType::LONG_PRESS: return "LONG_PRESS";
+        default: return "NONE";
+    }
+}
+
+static void emitGesture(const GestureEvent& event, const GestureManager::GestureCallback& callback) {
+    if (GESTURE_DEBUG_LOG && event.type != GestureType::NONE) {
+        Serial.printf("Gesture %s start=(%d,%d) end=(%d,%d) dur=%lums\n",
+                      gestureName(event.type),
+                      event.startX, event.startY, event.endX, event.endY,
+                      static_cast<unsigned long>(event.durationMs));
+    }
+    if (callback) callback(event);
+}
+
 void GestureManager::setCallback(GestureCallback cb) {
     callback_ = std::move(cb);
 }
@@ -38,7 +59,7 @@ void GestureManager::update(const TouchPoint& tp) {
 
     if (pendingSingleTap_ && (now - pendingTapTime_ > DOUBLE_TAP_WINDOW_MS)) {
         pendingSingleTap_ = false;
-        if (callback_) callback_(pendingTapEvent_);
+        emitGesture(pendingTapEvent_, callback_);
     }
 }
 
@@ -59,14 +80,14 @@ void GestureManager::detectGesture() {
         absDx < SWIPE_THRESHOLD_PX && absDy < SWIPE_THRESHOLD_PX) {
         event.type = GestureType::LONG_PRESS;
         pendingSingleTap_ = false;
-        if (callback_) callback_(event);
+        emitGesture(event, callback_);
         return;
     }
 
-    if (absDx > SWIPE_THRESHOLD_PX && absDx > absDy * 2) {
+    if (absDx >= RELAXED_SWIPE_THRESHOLD_PX && absDx >= absDy) {
         event.type = dx > 0 ? GestureType::RIGHT_SWIPE : GestureType::LEFT_SWIPE;
         pendingSingleTap_ = false;
-        if (callback_) callback_(event);
+        emitGesture(event, callback_);
         return;
     }
 
@@ -79,7 +100,7 @@ void GestureManager::detectGesture() {
             event.type = GestureType::DOUBLE_TAP;
             pendingSingleTap_ = false;
             lastTapTime_ = 0;
-            if (callback_) callback_(event);
+            emitGesture(event, callback_);
         } else {
             event.type = GestureType::SINGLE_TAP;
             pendingSingleTap_ = true;

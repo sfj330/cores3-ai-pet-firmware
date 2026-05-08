@@ -33,7 +33,7 @@ void FaceUI::setGazeOffset(float dx, float dy) {
     targetGazeY_ = dy;
 }
 
-void FaceUI::setExpression(int emotion) {
+void FaceUI::setExpression(FaceEmotion emotion) {
     currentEmotion_ = emotion;
 }
 
@@ -41,10 +41,28 @@ void FaceUI::setSpeakingMouthOpen(bool open) {
     speakingMouthOpen_ = open;
 }
 
+void FaceUI::setAiOverlay(bool visible, const char* status, const char* detail, bool wifiConnected) {
+    aiOverlayVisible_ = visible;
+    aiWifiConnected_ = wifiConnected;
+    aiStatus_ = status ? String(status) : String();
+    aiDetail_ = detail ? String(detail) : String();
+}
+
+void FaceUI::setVisionStatus(const char* status) {
+    visionStatus_ = status ? String(status) : String();
+}
+
 void FaceUI::wake() {
     sleeping_ = false;
     brightness_ = 255;
     M5.Lcd.setBrightness(brightness_);
+}
+
+void FaceUI::setTemporaryGaze(float dx, float dy, unsigned long durationMs) {
+    tempGazeX_ = dx;
+    tempGazeY_ = dy;
+    tempGazeActive_ = true;
+    tempGazeEndTime_ = millis() + durationMs;
 }
 
 void FaceUI::update() {
@@ -73,12 +91,22 @@ void FaceUI::updateBlink() {
 }
 
 void FaceUI::updateGaze() {
+    unsigned long now = millis();
+    if (tempGazeActive_) {
+        if (now >= tempGazeEndTime_) {
+            tempGazeActive_ = false;
+        } else {
+            gazeX_ = gazeX_ * 0.5f + tempGazeX_ * 0.5f;
+            gazeY_ = gazeY_ * 0.5f + tempGazeY_ * 0.5f;
+            return;
+        }
+    }
     gazeX_ = gazeX_ * (1.0f - GAZE_SMOOTH_ALPHA) + targetGazeX_ * GAZE_SMOOTH_ALPHA;
     gazeY_ = gazeY_ * (1.0f - GAZE_SMOOTH_ALPHA) + targetGazeY_ * GAZE_SMOOTH_ALPHA;
 }
 
 void FaceUI::updateSpeakingAnimation() {
-    if (speakingMouthOpen_ || currentEmotion_ == 4) {
+    if (speakingMouthOpen_ || currentEmotion_ == FaceEmotion::SPEAKING) {
         unsigned long now = millis();
         if (now - lastSpeakAnimTime_ > SPEAK_ANIM_INTERVAL) {
             lastSpeakAnimTime_ = now;
@@ -99,6 +127,7 @@ void FaceUI::drawFace() {
     drawEyebrows(cx, cy);
     drawMouth(cx, cy);
     drawCheeks(cx, cy);
+    drawStatusOverlay();
 }
 
 void FaceUI::drawEyes(int cx, int cy) {
@@ -114,36 +143,49 @@ void FaceUI::drawEyes(int cx, int cy) {
     int pupilR = BIG_PUPIL_R;
 
     bool drawArcEyes = false;
-    int arcDir = 0;
 
     switch (currentEmotion_) {
-        case 1:
+        case FaceEmotion::HAPPY:
             eyeH = BIG_EYE_H * 2 / 3;
             drawArcEyes = true;
-            arcDir = 1;
             break;
-        case 2:
+        case FaceEmotion::CURIOUS:
             eyeW = BIG_EYE_W + 6;
             eyeH = BIG_EYE_H + 6;
             pupilR = BIG_PUPIL_R + 2;
             break;
-        case 4:
+        case FaceEmotion::LISTENING:
+            eyeH = BIG_EYE_H + 4;
+            pupilDy -= 3;
+            break;
+        case FaceEmotion::THINKING:
             pupilDx += 4;
             pupilDy -= 4;
             break;
-        case 5:
+        case FaceEmotion::SPEAKING:
+            eyeW = BIG_EYE_W + 4;
             break;
-        case 6:
+        case FaceEmotion::SURPRISED:
             eyeW = BIG_EYE_W + 10;
             eyeH = BIG_EYE_H + 10;
             pupilR = BIG_PUPIL_R - 2;
             break;
-        case 7:
+        case FaceEmotion::SLEEPY:
             eyeH = BIG_EYE_H / 3;
             pupilR = 0;
             break;
-        case 8:
+        case FaceEmotion::TRACKING:
             pupilR = BIG_PUPIL_R + 1;
+            break;
+        case FaceEmotion::SHY:
+            eyeH = BIG_EYE_H / 2;
+            pupilDy += 6;
+            pupilR = BIG_PUPIL_R - 1;
+            break;
+        case FaceEmotion::SICK:
+            eyeH = BIG_EYE_H / 2;
+            pupilDy += 3;
+            pupilR = BIG_PUPIL_R - 2;
             break;
         default:
             break;
@@ -200,7 +242,7 @@ void FaceUI::drawEyes(int cx, int cy) {
         }
     }
 
-    if (currentEmotion_ == 7 && !isBlinking_) {
+    if ((currentEmotion_ == FaceEmotion::SLEEPY || currentEmotion_ == FaceEmotion::SHY || currentEmotion_ == FaceEmotion::SICK) && !isBlinking_) {
         canvas_.drawFastHLine(leftEyeX - eyeW / 2, eyeY, eyeW, 0x8410);
         canvas_.drawFastHLine(rightEyeX - eyeW / 2, eyeY, eyeW, 0x8410);
     }
@@ -221,35 +263,29 @@ void FaceUI::drawEyebrows(int cx, int cy) {
     int thickness = 3;
 
     switch (currentEmotion_) {
-        case 0:
-            break;
-        case 1:
-            ly -= 5; ry -= 5;
-            break;
-        case 2:
-            ly -= 8;
-            break;
-        case 3:
-            ly -= 2; ry -= 2;
-            break;
-        case 4:
+        case FaceEmotion::NORMAL: break;
+        case FaceEmotion::HAPPY: ly -= 5; ry -= 5; break;
+        case FaceEmotion::CURIOUS: ly -= 8; ry += 2; break;
+        case FaceEmotion::LISTENING: ly -= 2; ry -= 2; break;
+        case FaceEmotion::THINKING:
             lx1 = leftBrowX; lx2 = leftBrowX - BIG_BROW_W / 2;
             rx1 = rightBrowX; rx2 = rightBrowX + BIG_BROW_W / 2;
             ly += 3; ry += 3;
             break;
-        case 5:
+        case FaceEmotion::SPEAKING:
             ly += sin(millis() / 200.0f) * 2;
             ry += sin(millis() / 200.0f + 1.0f) * 2;
             break;
-        case 6:
-            ly -= 10; ry -= 10;
-            thickness = 4;
+        case FaceEmotion::SURPRISED: ly -= 10; ry -= 10; thickness = 4; break;
+        case FaceEmotion::SLEEPY: ly += 8; ry += 8; break;
+        case FaceEmotion::TRACKING: ly -= 4; ry -= 4; break;
+        case FaceEmotion::SHY: ly += 5; ry += 5; break;
+        case FaceEmotion::SICK:
+            lx2 = leftBrowX + BIG_BROW_W / 2 - 4;
+            rx1 = rightBrowX - BIG_BROW_W / 2 + 4;
+            ly += 4; ry += 4;
             break;
-        case 7:
-            ly += 8; ry += 8;
-            break;
-        default:
-            break;
+        default: break;
     }
 
     for (int t = 0; t < thickness; ++t) {
@@ -262,10 +298,10 @@ void FaceUI::drawMouth(int cx, int cy) {
     int mouthY = cy + MOUTH_Y_OFFSET;
 
     switch (currentEmotion_) {
-        case 0:
+        case FaceEmotion::NORMAL:
             canvas_.drawFastHLine(cx - BIG_MOUTH_W / 2, mouthY, BIG_MOUTH_W, TFT_WHITE);
             break;
-        case 1:
+        case FaceEmotion::HAPPY:
             {
                 int smW = BIG_MOUTH_W / 2;
                 for (int i = -smW; i <= smW; ++i) {
@@ -276,11 +312,11 @@ void FaceUI::drawMouth(int cx, int cy) {
                 }
             }
             break;
-        case 2:
+        case FaceEmotion::CURIOUS:
             canvas_.drawCircle(cx, mouthY, 7, TFT_WHITE);
             canvas_.drawCircle(cx, mouthY, 5, TFT_WHITE);
             break;
-        case 3:
+        case FaceEmotion::LISTENING:
             {
                 int smW = BIG_MOUTH_W / 2;
                 for (int i = -smW; i <= smW; ++i) {
@@ -289,10 +325,10 @@ void FaceUI::drawMouth(int cx, int cy) {
                 }
             }
             break;
-        case 4:
+        case FaceEmotion::THINKING:
             canvas_.fillCircle(cx + 4, mouthY, 5, TFT_WHITE);
             break;
-        case 5:
+        case FaceEmotion::SPEAKING:
             {
                 int openH = (int)(mouthOpenAmount_ * MOUTH_OPEN_MAX);
                 if (openH < 2) openH = 2;
@@ -300,15 +336,36 @@ void FaceUI::drawMouth(int cx, int cy) {
                                       BIG_MOUTH_W / 2, openH, 4, TFT_WHITE);
             }
             break;
-        case 6:
+        case FaceEmotion::SURPRISED:
             canvas_.fillCircle(cx, mouthY, BIG_MOUTH_W / 3, TFT_WHITE);
             canvas_.fillCircle(cx, mouthY, BIG_MOUTH_W / 3 - 4, TFT_BLACK);
             break;
-        case 7:
+        case FaceEmotion::SLEEPY:
             {
                 for (int i = -BIG_MOUTH_W / 3; i <= BIG_MOUTH_W / 3; ++i) {
                     int yOff = (int)(sin(i / 3.0f) * 2);
                     canvas_.drawPixel(cx + i, mouthY + yOff, 0x8410);
+                }
+            }
+            break;
+        case FaceEmotion::TRACKING:
+            canvas_.drawRoundRect(cx - BIG_MOUTH_W / 3, mouthY - 3, BIG_MOUTH_W * 2 / 3, 8, 3, TFT_WHITE);
+            break;
+        case FaceEmotion::SHY:
+            {
+                int smW = BIG_MOUTH_W / 3;
+                for (int i = -smW; i <= smW; ++i) {
+                    int yOff = (i * i) / (smW * 2) + 1;
+                    canvas_.drawPixel(cx + i, mouthY + yOff, TFT_WHITE);
+                }
+            }
+            break;
+        case FaceEmotion::SICK:
+            {
+                int smW = BIG_MOUTH_W / 2;
+                for (int i = -smW; i <= smW; ++i) {
+                    int yOff = (int)(sin(i / 2.5f + millis() / 300.0f) * 3) + 3;
+                    canvas_.drawPixel(cx + i, mouthY + yOff, 0xB5E2);
                 }
             }
             break;
@@ -319,12 +376,52 @@ void FaceUI::drawMouth(int cx, int cy) {
 }
 
 void FaceUI::drawCheeks(int cx, int cy) {
-    if (currentEmotion_ == 1 || currentEmotion_ == 6) {
-        int cheekY = cy + EYE_Y_OFFSET + BIG_EYE_H / 2;
-        int leftCheekX = cx - BIG_SPACING / 2 - BIG_EYE_W / 2 - 10;
-        int rightCheekX = cx + BIG_SPACING / 2 + BIG_EYE_W / 2 + 10;
+    int cheekY = cy + EYE_Y_OFFSET + BIG_EYE_H / 2;
+    int leftCheekX = cx - BIG_SPACING / 2 - BIG_EYE_W / 2 - 10;
+    int rightCheekX = cx + BIG_SPACING / 2 + BIG_EYE_W / 2 + 10;
 
+    if (currentEmotion_ == FaceEmotion::HAPPY || currentEmotion_ == FaceEmotion::SURPRISED) {
         canvas_.fillCircle(leftCheekX, cheekY, 10, 0x8010);
         canvas_.fillCircle(rightCheekX, cheekY, 10, 0x8010);
+    }
+
+    if (currentEmotion_ == FaceEmotion::SHY) {
+        canvas_.fillCircle(leftCheekX, cheekY, 12, 0xA014);
+        canvas_.fillCircle(rightCheekX, cheekY, 12, 0xA014);
+    }
+
+    if (currentEmotion_ == FaceEmotion::SICK) {
+        canvas_.fillCircle(leftCheekX, cheekY, 10, 0x37E0);
+        canvas_.fillCircle(rightCheekX, cheekY, 10, 0x37E0);
+    }
+}
+
+void FaceUI::drawStatusOverlay() {
+    if (visionStatus_.length() > 0) {
+        canvas_.setTextSize(1);
+        canvas_.setTextDatum(TL_DATUM);
+        canvas_.setTextColor(0x7BEF, TFT_BLACK);
+        canvas_.setCursor(6, DISPLAY_HEIGHT - 14);
+        canvas_.print(visionStatus_);
+    }
+
+    if (!aiOverlayVisible_) return;
+
+    int panelH = 58;
+    canvas_.fillRoundRect(18, 10, DISPLAY_WIDTH - 36, panelH, 6, TFT_DARKGREY);
+    canvas_.drawRoundRect(18, 10, DISPLAY_WIDTH - 36, panelH, 6, aiWifiConnected_ ? TFT_GREEN : TFT_ORANGE);
+
+    canvas_.setTextDatum(TL_DATUM);
+    canvas_.setTextColor(TFT_WHITE, TFT_DARKGREY);
+    canvas_.setTextSize(2);
+    canvas_.setCursor(32, 20);
+    canvas_.print("XiaoZhi AI");
+
+    canvas_.setTextSize(1);
+    canvas_.setCursor(32, 43);
+    canvas_.print(aiStatus_);
+    if (aiDetail_.length() > 0) {
+        canvas_.setCursor(32, 56);
+        canvas_.print(aiDetail_);
     }
 }

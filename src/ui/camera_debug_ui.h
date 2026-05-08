@@ -47,8 +47,8 @@ private:
     static constexpr int BACK_W = 56;
     static constexpr int BACK_H = 24;
 
-    static constexpr int SHOT_X = DISPLAY_WIDTH / 2 - 40;
-    static constexpr int SHOT_Y = DISPLAY_HEIGHT - 36;
-    static constexpr int SHOT_W = 80;
-    static constexpr int SHOT_H = 30;
+    static constexpr int SHOT_X = DISPLAY_WIDTH - 50;
+    static constexpr int SHOT_Y = 40;
+    static constexpr int SHOT_W = 46;
+    static constexpr int SHOT_H = DISPLAY_HEIGHT - 80;
 };
