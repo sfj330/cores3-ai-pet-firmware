@@ -50,6 +50,8 @@ static SemaphoreHandle_t displayMutex = nullptr;
 
 static bool gSickActive = false;
 static unsigned long gSickUntil = 0;
+static volatile bool gNeedActivationRequest = false;
+static volatile bool gNeedActivationCheck = false;
 static bool gActivationCodeRequested = false;
 static unsigned long gLastActivationCheck = 0;
 
@@ -70,47 +72,68 @@ static void giveDisplayLock() {
 static void drawAiOverlay() {
     if (AppState::instance().getState() != AppStateEnum::AI) return;
 
-    M5.Lcd.setTextDatum(TC_DATUM);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
-    M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 10);
-    M5.Lcd.print("XiaoZhi AI");
+    int cx = DISPLAY_WIDTH / 2;
 
     if (!gWifiManager.isConnected()) {
+        M5.Lcd.fillScreen(TFT_BLACK);
+        M5.Lcd.setTextDatum(TC_DATUM);
+        M5.Lcd.setTextSize(2);
         M5.Lcd.setTextColor(TFT_RED, TFT_BLACK);
-        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
-        M5.Lcd.print("Wi-Fi required");
+        M5.Lcd.drawString("No Wi-Fi", cx, 80);
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        M5.Lcd.drawString("Connect Wi-Fi first", cx, 110);
         M5.Lcd.setTextDatum(TL_DATUM);
         return;
     }
 
     if (gXiaoZhiClient.isActivated()) {
+        M5.Lcd.setTextDatum(TC_DATUM);
+        M5.Lcd.setTextSize(1);
         M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
-        M5.Lcd.print("Activated");
+        M5.Lcd.drawString("XiaoZhi AI - Activated", cx, 5);
         M5.Lcd.setTextDatum(TL_DATUM);
         return;
     }
 
     String code = gXiaoZhiClient.getActivationCode();
     if (code.length() > 0) {
-        M5.Lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
-        M5.Lcd.print("Enter code on xiaozhi.me:");
+        M5.Lcd.fillScreen(TFT_BLACK);
 
-        M5.Lcd.setTextSize(3);
+        M5.Lcd.setTextDatum(TC_DATUM);
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+        M5.Lcd.drawString("XiaoZhi AI", cx, 15);
+
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+        M5.Lcd.drawString("Enter code on xiaozhi.me:", cx, 50);
+
+        M5.Lcd.setTextSize(4);
         M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 60);
-        M5.Lcd.print(code);
+        M5.Lcd.drawString(code, cx, 85);
 
         M5.Lcd.setTextSize(1);
         M5.Lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 100);
-        M5.Lcd.print("Swipe right to go back");
+        M5.Lcd.drawString("Swipe right to go back", cx, 210);
     } else {
+        M5.Lcd.fillScreen(TFT_BLACK);
+        M5.Lcd.setTextDatum(TC_DATUM);
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+        M5.Lcd.drawString("XiaoZhi AI", cx, 80);
         M5.Lcd.setTextColor(TFT_ORANGE, TFT_BLACK);
-        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
-        M5.Lcd.print("Requesting code...");
+        M5.Lcd.drawString("Requesting code...", cx, 105);
+        String err = gXiaoZhiClient.getLastError();
+        if (err.length() > 0) {
+            if (err.length() > 34) {
+                err = err.substring(0, 34);
+            }
+            M5.Lcd.setTextColor(TFT_RED, TFT_BLACK);
+            M5.Lcd.drawString(err, cx, 135);
+            M5.Lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+            M5.Lcd.drawString(gXiaoZhiClient.getFirmwareIdentity(), cx, 160);
+        }
     }
 
     M5.Lcd.setTextDatum(TL_DATUM);
@@ -169,8 +192,10 @@ void uiTask(void* pvParameters) {
                     break;
 
                 case AppStateEnum::AI:
-                    gFaceUI.setExpression(static_cast<int>(emotion));
-                    gFaceUI.update();
+                    if (gXiaoZhiClient.isActivated()) {
+                        gFaceUI.setExpression(static_cast<int>(emotion));
+                        gFaceUI.update();
+                    }
                     drawAiOverlay();
                     break;
 
@@ -294,6 +319,19 @@ void aiTask(void* pvParameters) {
             gXiaoZhiClient.process();
         }
 
+        if (gNeedActivationRequest) {
+            gNeedActivationRequest = false;
+            if (!gXiaoZhiClient.isActivated()) {
+                Serial.println("AI task: requesting activation code...");
+                gXiaoZhiClient.requestActivationCode();
+            }
+        }
+
+        if (gNeedActivationCheck) {
+            gNeedActivationCheck = false;
+            gXiaoZhiClient.checkActivation();
+        }
+
         vTaskDelay(delayTicks);
     }
 }
@@ -398,7 +436,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                     break;
                 case GestureType::SINGLE_TAP:
                     if (!gXiaoZhiClient.isActivated() && gWifiManager.isConnected()) {
-                        gXiaoZhiClient.requestActivationCode();
+                        gNeedActivationRequest = true;
                     }
                     appState.setEmotion(FaceEmotion::LISTENING);
                     gFaceUI.setTemporaryGaze(0.0f, -0.3f, 800);
@@ -535,8 +573,8 @@ static void stateChangeHandler(AppStateEnum state) {
             gPomodoroUI.hide();
             if (gWifiManager.isConnected()) {
                 AppState::instance().setEmotion(FaceEmotion::LISTENING);
-                if (!gActivationCodeRequested) {
-                    gXiaoZhiClient.requestActivationCode();
+                if (!gXiaoZhiClient.isActivated() && !gXiaoZhiClient.hasActivationCode() && !gActivationCodeRequested) {
+                    gNeedActivationRequest = true;
                     gActivationCodeRequested = true;
                 }
             } else {
@@ -784,10 +822,10 @@ void loop() {
         }
     }
 
-    if (state == AppStateEnum::AI && !gXiaoZhiClient.isActivated() && gWifiManager.isConnected()) {
+    if (XIAOZHI_REAL_ACTIVATION && state == AppStateEnum::AI && !gXiaoZhiClient.isActivated() && gWifiManager.isConnected()) {
         if (now - gLastActivationCheck >= 5000) {
             gLastActivationCheck = now;
-            gXiaoZhiClient.checkActivation();
+            gNeedActivationCheck = true;
         }
     }
 

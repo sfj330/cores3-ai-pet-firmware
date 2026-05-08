@@ -90,6 +90,11 @@ constexpr float BATTERY_EMPTY_VOLTAGE = 3.3f;
 constexpr float BATTERY_LOW_THRESHOLD = 3.5f;   // Go SLEEPY below this
 
 // ==================== AI ====================
+constexpr bool XIAOZHI_REAL_ACTIVATION = true;
+constexpr const char* XIAOZHI_APP_NAME = "xiaozhi";
+constexpr const char* XIAOZHI_FIRMWARE_VERSION = "2.2.6";
+constexpr const char* XIAOZHI_BOARD_TYPE = "m5stack-core-s3";
+constexpr const char* XIAOZHI_CHIP_ID = "esp32s3";
 constexpr const char* AI_SERVER_URL = "wss://api.xiaozhi.me/v1";
 constexpr int AI_AUDIO_SAMPLE_RATE = 16000;
 

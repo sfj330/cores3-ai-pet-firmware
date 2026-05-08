@@ -1,4 +1,5 @@
 #include "face_ui.h"
+#include "app/app_state.h"
 #include "config/app_config.h"
 #include <M5CoreS3.h>
 #include <cmath>
@@ -33,23 +34,12 @@ void FaceUI::setGazeOffset(float dx, float dy) {
     targetGazeY_ = dy;
 }
 
-void FaceUI::setExpression(FaceEmotion emotion) {
+void FaceUI::setExpression(int emotion) {
     currentEmotion_ = emotion;
 }
 
 void FaceUI::setSpeakingMouthOpen(bool open) {
     speakingMouthOpen_ = open;
-}
-
-void FaceUI::setAiOverlay(bool visible, const char* status, const char* detail, bool wifiConnected) {
-    aiOverlayVisible_ = visible;
-    aiWifiConnected_ = wifiConnected;
-    aiStatus_ = status ? String(status) : String();
-    aiDetail_ = detail ? String(detail) : String();
-}
-
-void FaceUI::setVisionStatus(const char* status) {
-    visionStatus_ = status ? String(status) : String();
 }
 
 void FaceUI::wake() {
@@ -106,7 +96,7 @@ void FaceUI::updateGaze() {
 }
 
 void FaceUI::updateSpeakingAnimation() {
-    if (speakingMouthOpen_ || currentEmotion_ == FaceEmotion::SPEAKING) {
+    if (speakingMouthOpen_ || currentEmotion_ == static_cast<int>(FaceEmotion::SPEAKING)) {
         unsigned long now = millis();
         if (now - lastSpeakAnimTime_ > SPEAK_ANIM_INTERVAL) {
             lastSpeakAnimTime_ = now;
@@ -127,7 +117,6 @@ void FaceUI::drawFace() {
     drawEyebrows(cx, cy);
     drawMouth(cx, cy);
     drawCheeks(cx, cy);
-    drawStatusOverlay();
 }
 
 void FaceUI::drawEyes(int cx, int cy) {
@@ -144,7 +133,7 @@ void FaceUI::drawEyes(int cx, int cy) {
 
     bool drawArcEyes = false;
 
-    switch (currentEmotion_) {
+    switch (static_cast<FaceEmotion>(currentEmotion_)) {
         case FaceEmotion::HAPPY:
             eyeH = BIG_EYE_H * 2 / 3;
             drawArcEyes = true;
@@ -242,7 +231,8 @@ void FaceUI::drawEyes(int cx, int cy) {
         }
     }
 
-    if ((currentEmotion_ == FaceEmotion::SLEEPY || currentEmotion_ == FaceEmotion::SHY || currentEmotion_ == FaceEmotion::SICK) && !isBlinking_) {
+    FaceEmotion em = static_cast<FaceEmotion>(currentEmotion_);
+    if ((em == FaceEmotion::SLEEPY || em == FaceEmotion::SHY || em == FaceEmotion::SICK) && !isBlinking_) {
         canvas_.drawFastHLine(leftEyeX - eyeW / 2, eyeY, eyeW, 0x8410);
         canvas_.drawFastHLine(rightEyeX - eyeW / 2, eyeY, eyeW, 0x8410);
     }
@@ -262,7 +252,7 @@ void FaceUI::drawEyebrows(int cx, int cy) {
     int ry = browY;
     int thickness = 3;
 
-    switch (currentEmotion_) {
+    switch (static_cast<FaceEmotion>(currentEmotion_)) {
         case FaceEmotion::NORMAL: break;
         case FaceEmotion::HAPPY: ly -= 5; ry -= 5; break;
         case FaceEmotion::CURIOUS: ly -= 8; ry += 2; break;
@@ -297,7 +287,7 @@ void FaceUI::drawEyebrows(int cx, int cy) {
 void FaceUI::drawMouth(int cx, int cy) {
     int mouthY = cy + MOUTH_Y_OFFSET;
 
-    switch (currentEmotion_) {
+    switch (static_cast<FaceEmotion>(currentEmotion_)) {
         case FaceEmotion::NORMAL:
             canvas_.drawFastHLine(cx - BIG_MOUTH_W / 2, mouthY, BIG_MOUTH_W, TFT_WHITE);
             break;
@@ -380,48 +370,20 @@ void FaceUI::drawCheeks(int cx, int cy) {
     int leftCheekX = cx - BIG_SPACING / 2 - BIG_EYE_W / 2 - 10;
     int rightCheekX = cx + BIG_SPACING / 2 + BIG_EYE_W / 2 + 10;
 
-    if (currentEmotion_ == FaceEmotion::HAPPY || currentEmotion_ == FaceEmotion::SURPRISED) {
+    FaceEmotion em = static_cast<FaceEmotion>(currentEmotion_);
+
+    if (em == FaceEmotion::HAPPY || em == FaceEmotion::SURPRISED) {
         canvas_.fillCircle(leftCheekX, cheekY, 10, 0x8010);
         canvas_.fillCircle(rightCheekX, cheekY, 10, 0x8010);
     }
 
-    if (currentEmotion_ == FaceEmotion::SHY) {
+    if (em == FaceEmotion::SHY) {
         canvas_.fillCircle(leftCheekX, cheekY, 12, 0xA014);
         canvas_.fillCircle(rightCheekX, cheekY, 12, 0xA014);
     }
 
-    if (currentEmotion_ == FaceEmotion::SICK) {
+    if (em == FaceEmotion::SICK) {
         canvas_.fillCircle(leftCheekX, cheekY, 10, 0x37E0);
         canvas_.fillCircle(rightCheekX, cheekY, 10, 0x37E0);
-    }
-}
-
-void FaceUI::drawStatusOverlay() {
-    if (visionStatus_.length() > 0) {
-        canvas_.setTextSize(1);
-        canvas_.setTextDatum(TL_DATUM);
-        canvas_.setTextColor(0x7BEF, TFT_BLACK);
-        canvas_.setCursor(6, DISPLAY_HEIGHT - 14);
-        canvas_.print(visionStatus_);
-    }
-
-    if (!aiOverlayVisible_) return;
-
-    int panelH = 58;
-    canvas_.fillRoundRect(18, 10, DISPLAY_WIDTH - 36, panelH, 6, TFT_DARKGREY);
-    canvas_.drawRoundRect(18, 10, DISPLAY_WIDTH - 36, panelH, 6, aiWifiConnected_ ? TFT_GREEN : TFT_ORANGE);
-
-    canvas_.setTextDatum(TL_DATUM);
-    canvas_.setTextColor(TFT_WHITE, TFT_DARKGREY);
-    canvas_.setTextSize(2);
-    canvas_.setCursor(32, 20);
-    canvas_.print("XiaoZhi AI");
-
-    canvas_.setTextSize(1);
-    canvas_.setCursor(32, 43);
-    canvas_.print(aiStatus_);
-    if (aiDetail_.length() > 0) {
-        canvas_.setCursor(32, 56);
-        canvas_.print(aiDetail_);
     }
 }
