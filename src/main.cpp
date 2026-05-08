@@ -47,8 +47,11 @@ static TaskHandle_t aiTaskHandle = nullptr;
 static TaskHandle_t powerTaskHandle = nullptr;
 static TaskHandle_t networkTaskHandle = nullptr;
 static SemaphoreHandle_t displayMutex = nullptr;
+
 static bool gSickActive = false;
 static unsigned long gSickUntil = 0;
+static bool gActivationCodeRequested = false;
+static unsigned long gLastActivationCheck = 0;
 
 static void gestureEventHandler(const GestureEvent& event);
 static void stateChangeHandler(AppStateEnum state);
@@ -62,6 +65,55 @@ static void giveDisplayLock() {
     if (displayMutex != nullptr) {
         xSemaphoreGive(displayMutex);
     }
+}
+
+static void drawAiOverlay() {
+    if (AppState::instance().getState() != AppStateEnum::AI) return;
+
+    M5.Lcd.setTextDatum(TC_DATUM);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+    M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 10);
+    M5.Lcd.print("XiaoZhi AI");
+
+    if (!gWifiManager.isConnected()) {
+        M5.Lcd.setTextColor(TFT_RED, TFT_BLACK);
+        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
+        M5.Lcd.print("Wi-Fi required");
+        M5.Lcd.setTextDatum(TL_DATUM);
+        return;
+    }
+
+    if (gXiaoZhiClient.isActivated()) {
+        M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
+        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
+        M5.Lcd.print("Activated");
+        M5.Lcd.setTextDatum(TL_DATUM);
+        return;
+    }
+
+    String code = gXiaoZhiClient.getActivationCode();
+    if (code.length() > 0) {
+        M5.Lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
+        M5.Lcd.print("Enter code on xiaozhi.me:");
+
+        M5.Lcd.setTextSize(3);
+        M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 60);
+        M5.Lcd.print(code);
+
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 100);
+        M5.Lcd.print("Swipe right to go back");
+    } else {
+        M5.Lcd.setTextColor(TFT_ORANGE, TFT_BLACK);
+        M5.Lcd.setCursor(DISPLAY_WIDTH / 2, 30);
+        M5.Lcd.print("Requesting code...");
+    }
+
+    M5.Lcd.setTextDatum(TL_DATUM);
 }
 
 static void handleFaceTap(int x, int y) {
@@ -99,7 +151,7 @@ void uiTask(void* pvParameters) {
         if (takeDisplayLock()) {
             switch (state) {
                 case AppStateEnum::FACE:
-                    gFaceUI.setExpression(emotion);
+                    gFaceUI.setExpression(static_cast<int>(emotion));
                     gFaceUI.update();
                     break;
 
@@ -117,8 +169,9 @@ void uiTask(void* pvParameters) {
                     break;
 
                 case AppStateEnum::AI:
-                    gFaceUI.setExpression(emotion);
+                    gFaceUI.setExpression(static_cast<int>(emotion));
                     gFaceUI.update();
+                    drawAiOverlay();
                     break;
 
                 case AppStateEnum::SLEEP:
@@ -268,13 +321,6 @@ void networkTask(void* pvParameters) {
 
         if (AppState::instance().getState() == AppStateEnum::MENU) {
             gMenuUI.setWifiStatus(gWifiManager.statusText().c_str(), gWifiManager.ipString().c_str());
-            gMenuUI.setVisionStatus(gFaceDetector.statusText());
-        } else if (AppState::instance().getState() == AppStateEnum::AI) {
-            if (gWifiManager.isConnected()) {
-                gFaceUI.setAiOverlay(true, "Device verification required", "Real service not configured", true);
-            } else {
-                gFaceUI.setAiOverlay(true, "Wi-Fi required", "Device verification required", false);
-            }
         }
 
         vTaskDelay(delayTicks);
@@ -282,7 +328,7 @@ void networkTask(void* pvParameters) {
 }
 
 static void handleCameraShot() {
-    if (!gStorageManager.forceReprobe()) {
+    if (!gStorageManager.ensureReady()) {
         gCameraDebugUI.setCaptureStatus(gStorageManager.statusText().c_str());
         gCameraDebugUI.setSdReady(false);
         return;
@@ -351,6 +397,9 @@ static void gestureEventHandler(const GestureEvent& event) {
                     appState.setState(AppStateEnum::FACE);
                     break;
                 case GestureType::SINGLE_TAP:
+                    if (!gXiaoZhiClient.isActivated() && gWifiManager.isConnected()) {
+                        gXiaoZhiClient.requestActivationCode();
+                    }
                     appState.setEmotion(FaceEmotion::LISTENING);
                     gFaceUI.setTemporaryGaze(0.0f, -0.3f, 800);
                     break;
@@ -467,19 +516,15 @@ static void stateChangeHandler(AppStateEnum state) {
             gMenuUI.hide();
             gCameraDebugUI.hide();
             gPomodoroUI.hide();
-            gFaceUI.setAiOverlay(false, "", "", gWifiManager.isConnected());
-            gFaceUI.setVisionStatus(gFaceDetector.statusText());
             AppState::instance().setEmotion(FaceEmotion::NORMAL);
             gSickActive = false;
             gSickUntil = 0;
-            if (!gFaceDetector.backendAvailable() || !gFaceDetector.isEnabled()) {
-                gCameraManager.stopCapture();
-                gCameraDebugUI.setCameraReady(false);
-            } else {
+            gActivationCodeRequested = false;
+            if (gFaceDetector.backendAvailable() && gFaceDetector.isEnabled()) {
                 if (!gCameraManager.isRunning()) {
                     bool camOk = gCameraManager.isInitialized() || gCameraManager.begin();
                     camOk = camOk && gCameraManager.startCapture();
-                    Serial.println(camOk ? "Vision: camera started for face tracking" : "Vision: camera start failed");
+                    Serial.println(camOk ? "Vision: camera started" : "Vision: camera start failed");
                 }
             }
             break;
@@ -488,29 +533,22 @@ static void stateChangeHandler(AppStateEnum state) {
             gMenuUI.hide();
             gCameraDebugUI.hide();
             gPomodoroUI.hide();
-            gCameraManager.stopCapture();
-            gCameraDebugUI.setCameraReady(false);
-            gFaceUI.setVisionStatus("");
             if (gWifiManager.isConnected()) {
                 AppState::instance().setEmotion(FaceEmotion::LISTENING);
-                gFaceUI.setAiOverlay(true, "Device verification required", "Real service not configured", true);
-                gXiaoZhiClient.startListening();
+                if (!gActivationCodeRequested) {
+                    gXiaoZhiClient.requestActivationCode();
+                    gActivationCodeRequested = true;
+                }
             } else {
                 AppState::instance().setEmotion(FaceEmotion::SURPRISED);
-                gFaceUI.setAiOverlay(true, "Wi-Fi required", "Device verification required", false);
-                gXiaoZhiClient.startListening();
-                Serial.println("AI: Wi-Fi not connected, placeholder mode");
+                Serial.println("AI: Wi-Fi not connected");
             }
             break;
 
         case AppStateEnum::MENU:
             gCameraDebugUI.hide();
             gPomodoroUI.hide();
-            gCameraManager.stopCapture();
-            gCameraDebugUI.setCameraReady(false);
             gMenuUI.setWifiStatus(gWifiManager.statusText().c_str(), gWifiManager.ipString().c_str());
-            gMenuUI.setVisionStatus(gFaceDetector.statusText());
-            gFaceUI.setAiOverlay(false, "", "", gWifiManager.isConnected());
             gMenuUI.show();
             break;
 
@@ -520,7 +558,6 @@ static void stateChangeHandler(AppStateEnum state) {
             gStorageManager.ensureReady();
             gCameraDebugUI.setSdReady(gStorageManager.isReady());
             gCameraDebugUI.setCaptureStatus(gStorageManager.statusText().c_str());
-            gFaceUI.setAiOverlay(false, "", "", gWifiManager.isConnected());
             gCameraDebugUI.show();
             if (!gCameraManager.isRunning()) {
                 bool cameraReady = gCameraManager.isInitialized() || gCameraManager.begin();
@@ -533,9 +570,6 @@ static void stateChangeHandler(AppStateEnum state) {
         case AppStateEnum::POMODORO:
             gMenuUI.hide();
             gCameraDebugUI.hide();
-            gCameraManager.stopCapture();
-            gCameraDebugUI.setCameraReady(false);
-            gFaceUI.setAiOverlay(false, "", "", gWifiManager.isConnected());
             gPomodoroUI.show();
             break;
 
@@ -551,31 +585,12 @@ static void stateChangeHandler(AppStateEnum state) {
 
 static void aiStateHandler(VoiceState voiceState) {
     AppState& appState = AppState::instance();
-    const char* aiStatus = "IDLE";
     switch (voiceState) {
-        case VoiceState::IDLE:
-            appState.setEmotion(FaceEmotion::NORMAL);
-            aiStatus = "IDLE";
-            break;
-        case VoiceState::LISTENING:
-            appState.setEmotion(FaceEmotion::LISTENING);
-            aiStatus = "LISTENING";
-            break;
-        case VoiceState::THINKING:
-            appState.setEmotion(FaceEmotion::THINKING);
-            aiStatus = "THINKING";
-            break;
-        case VoiceState::SPEAKING:
-            appState.setEmotion(FaceEmotion::SPEAKING);
-            aiStatus = "SPEAKING";
-            break;
-        case VoiceState::ERROR:
-            appState.setEmotion(FaceEmotion::SURPRISED);
-            aiStatus = "ERROR";
-            break;
-    }
-    if (appState.getState() == AppStateEnum::AI) {
-        gFaceUI.setAiOverlay(true, aiStatus, "Device verification required", gWifiManager.isConnected());
+        case VoiceState::IDLE:       appState.setEmotion(FaceEmotion::NORMAL); break;
+        case VoiceState::LISTENING:  appState.setEmotion(FaceEmotion::LISTENING); break;
+        case VoiceState::THINKING:   appState.setEmotion(FaceEmotion::THINKING); break;
+        case VoiceState::SPEAKING:   appState.setEmotion(FaceEmotion::SPEAKING); break;
+        case VoiceState::ERROR:      appState.setEmotion(FaceEmotion::SURPRISED); break;
     }
     Event aiEvent;
     aiEvent.type = EventType::AI_STATE_CHANGE;
@@ -698,8 +713,6 @@ void setup() {
 
     bootStep("FaceDetector...", 10);
     gFaceDetector.begin();
-    gFaceUI.setVisionStatus(gFaceDetector.statusText());
-    gMenuUI.setVisionStatus(gFaceDetector.statusText());
     bootStep("FaceDetector OK", 10);
 
     bootStep("XiaoZhiClient...", 11);
@@ -768,6 +781,13 @@ void loop() {
             if (AppState::instance().getEmotion() == FaceEmotion::SICK) {
                 AppState::instance().setEmotion(FaceEmotion::NORMAL);
             }
+        }
+    }
+
+    if (state == AppStateEnum::AI && !gXiaoZhiClient.isActivated() && gWifiManager.isConnected()) {
+        if (now - gLastActivationCheck >= 5000) {
+            gLastActivationCheck = now;
+            gXiaoZhiClient.checkActivation();
         }
     }
 
