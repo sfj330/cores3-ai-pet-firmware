@@ -2,6 +2,20 @@
 #include "config/app_config.h"
 #include <M5CoreS3.h>
 #include <cmath>
+#include <utility>
+
+namespace {
+constexpr uint16_t COLOR_BG = 0x0841;
+constexpr uint16_t COLOR_PANEL = 0x18E3;
+constexpr uint16_t COLOR_PANEL_DARK = 0x1082;
+constexpr uint16_t COLOR_PANEL_LIGHT = 0x2945;
+constexpr uint16_t COLOR_TEXT_DIM = 0x9CF3;
+constexpr uint16_t COLOR_TRACK = 0x4208;
+constexpr uint16_t COLOR_FOCUS = 0xFD20;
+constexpr uint16_t COLOR_SHORT = 0x07E0;
+constexpr uint16_t COLOR_LONG = 0x051F;
+constexpr uint16_t COLOR_DEEP = 0xA81F;
+}
 
 PomodoroUI::PomodoroUI() : canvas_(&M5.Lcd) {}
 
@@ -68,12 +82,11 @@ int PomodoroUI::getActivePreset() const {
 }
 
 void PomodoroUI::selectPreset(int index) {
+    if (selectionLocked_) {
+        return;
+    }
     if (index >= 0 && index < PRESET_COUNT && index != activePreset_) {
         activePreset_ = index;
-        if (state_ == PomodoroState::RUNNING) {
-            elapsed_ = 0;
-            lastTick_ = millis();
-        }
         dirty_ = true;
     }
 }
@@ -88,6 +101,54 @@ uint8_t PomodoroUI::rotationForOrientation(PomoOrientation o) const {
         default: offset = 0; break;
     }
     return (baseRotation_ + offset) & 3;
+}
+
+int PomodoroUI::presetIndexForOrientation(PomoOrientation o) const {
+    for (int i = 0; i < PRESET_COUNT; ++i) {
+        if (presets_[i].orientation == o) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void PomodoroUI::syncPresetToCurrentOrientation() {
+    int index = presetIndexForOrientation(currentOrientation_);
+    if (index >= 0) {
+        selectPreset(index);
+    }
+}
+
+uint16_t PomodoroUI::accentColor(int index) const {
+    switch (index) {
+        case 0: return COLOR_FOCUS;
+        case 1: return COLOR_SHORT;
+        case 2: return COLOR_LONG;
+        case 3: return COLOR_DEEP;
+        default: return TFT_WHITE;
+    }
+}
+
+uint16_t PomodoroUI::activeAccentColor() const {
+    return accentColor(activePreset_);
+}
+
+const char* PomodoroUI::shortPresetLabel(int index) const {
+    switch (index) {
+        case 0: return "25m";
+        case 1: return "5m";
+        case 2: return "15m";
+        case 3: return "50m";
+        default: return "--";
+    }
+}
+
+const char* PomodoroUI::statusText() const {
+    switch (state_) {
+        case PomodoroState::RUNNING: return paused_ ? "PAUSED" : "FOCUSING";
+        case PomodoroState::RINGING: return "DONE";
+        default: return "READY";
+    }
 }
 
 void PomodoroUI::applyDisplayRotation(PomoOrientation o) {
@@ -108,11 +169,8 @@ void PomodoroUI::setOrientation(PomoOrientation o) {
     currentOrientation_ = o;
     applyDisplayRotation(o);
 
-    for (int i = 0; i < PRESET_COUNT; ++i) {
-        if (presets_[i].orientation == o) {
-            selectPreset(i);
-            break;
-        }
+    if (!selectionLocked_) {
+        syncPresetToCurrentOrientation();
     }
 }
 
@@ -122,6 +180,8 @@ void PomodoroUI::togglePause() {
         elapsed_ = 0;
         lastTick_ = millis();
         paused_ = false;
+        selectionLocked_ = true;
+        completionNotified_ = false;
     } else if (state_ == PomodoroState::RINGING) {
         reset();
     } else {
@@ -137,7 +197,14 @@ void PomodoroUI::reset() {
     state_ = PomodoroState::IDLE;
     elapsed_ = 0;
     paused_ = false;
+    selectionLocked_ = false;
+    completionNotified_ = false;
+    syncPresetToCurrentOrientation();
     dirty_ = true;
+}
+
+void PomodoroUI::setCompleteCallback(std::function<void(int)> cb) {
+    completeCallback_ = std::move(cb);
 }
 
 void PomodoroUI::markDirty() {
@@ -178,6 +245,12 @@ void PomodoroUI::update() {
             state_ = PomodoroState::RINGING;
             ringStart_ = now;
             elapsed_ = duration;
+            if (!completionNotified_) {
+                completionNotified_ = true;
+                if (completeCallback_) {
+                    completeCallback_(activePreset_);
+                }
+            }
             dirty_ = true;
         }
     }
@@ -188,10 +261,10 @@ void PomodoroUI::update() {
 
     if (!dirty_ && (now - lastDrawTime_ < REDRAW_INTERVAL_MS)) return;
 
-    canvas_.fillSprite(TFT_BLACK);
+    drawBackground();
     drawPresetSelector();
-    drawTimer();
     drawProgressRing();
+    drawTimer();
     drawControls();
     drawBackButton();
 
@@ -204,26 +277,63 @@ void PomodoroUI::update() {
     dirty_ = false;
 }
 
+void PomodoroUI::drawBackground() {
+    int w = canvas_.width();
+    int h = canvas_.height();
+    uint16_t accent = activeAccentColor();
+
+    canvas_.fillSprite(COLOR_BG);
+    canvas_.fillRect(0, 0, w, 35, COLOR_PANEL_DARK);
+    canvas_.fillRect(0, 35, w, 2, accent);
+
+    for (int x = 12; x < w; x += 28) {
+        canvas_.drawPixel(x, 9, COLOR_PANEL_LIGHT);
+        canvas_.drawPixel(x + 8, h - 10, COLOR_PANEL_LIGHT);
+    }
+
+    canvas_.setTextDatum(TC_DATUM);
+    canvas_.setTextSize(1);
+    canvas_.setTextColor(TFT_WHITE, COLOR_PANEL_DARK);
+    canvas_.drawString("Pomodoro", w / 2, 9);
+
+    int pillW = 64;
+    int pillX = w - pillW - 8;
+    if (pillX > BACK_X + BACK_W + 6) {
+        canvas_.fillRoundRect(pillX, 7, pillW, 20, 8, COLOR_PANEL);
+        canvas_.drawRoundRect(pillX, 7, pillW, 20, 8, accent);
+        canvas_.setTextColor(accent, COLOR_PANEL);
+        canvas_.drawString(statusText(), pillX + pillW / 2, 13);
+    }
+
+    canvas_.setTextDatum(TL_DATUM);
+}
+
 void PomodoroUI::drawPresetSelector() {
     int w = canvas_.width();
-    int boxGap = 6;
-    int boxW = (w - 20 - boxGap * (PRESET_COUNT - 1)) / PRESET_COUNT;
-    if (boxW < 48) boxW = 48;
-    int boxH = 28;
-    int startX = 10;
-    int y = 38;
+    int boxGap = 5;
+    int startX = 8;
+    int boxW = (w - startX * 2 - boxGap * (PRESET_COUNT - 1)) / PRESET_COUNT;
+    if (boxW < 46) boxW = 46;
+    int boxH = 31;
+    int y = 43;
 
     canvas_.setTextSize(1);
-    canvas_.setTextDatum(TL_DATUM);
+    canvas_.setTextDatum(MC_DATUM);
     for (int i = 0; i < PRESET_COUNT; ++i) {
         int x = startX + i * (boxW + boxGap);
-        uint16_t bgColor = (i == activePreset_) ? TFT_WHITE : TFT_DARKGREY;
-        uint16_t txtColor = (i == activePreset_) ? TFT_BLACK : TFT_WHITE;
-        canvas_.fillRoundRect(x, y, boxW, boxH, 4, bgColor);
+        uint16_t accent = accentColor(i);
+        uint16_t bgColor = (i == activePreset_) ? accent : COLOR_PANEL;
+        uint16_t txtColor = (i == activePreset_) ? TFT_BLACK : COLOR_TEXT_DIM;
+
+        canvas_.fillRoundRect(x, y, boxW, boxH, 6, bgColor);
+        if (i != activePreset_) {
+            canvas_.drawRoundRect(x, y, boxW, boxH, 6, COLOR_PANEL_LIGHT);
+            canvas_.fillCircle(x + boxW / 2, y + 6, 2, accent);
+        }
         canvas_.setTextColor(txtColor, bgColor);
-        canvas_.setCursor(x + 4, y + 10);
-        canvas_.print(presets_[i].label);
+        canvas_.drawString(shortPresetLabel(i), x + boxW / 2, y + 18);
     }
+    canvas_.setTextDatum(TL_DATUM);
 }
 
 void PomodoroUI::drawTimer() {
@@ -233,49 +343,58 @@ void PomodoroUI::drawTimer() {
     unsigned long remaining = elapsed_ >= duration ? 0 : duration - elapsed_;
     int minutes = (remaining / 60000) % 60;
     int seconds = (remaining / 1000) % 60;
-    int timerY = h / 2 - 52;
+    int cy = h / 2 + (h < 260 ? 10 : 18);
 
-    canvas_.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+    canvas_.setTextSize(1);
+    canvas_.drawString(presets_[activePreset_].label, w / 2, cy - 36);
+
+    canvas_.setTextColor(TFT_WHITE, COLOR_BG);
     canvas_.setTextSize(4);
-    canvas_.setCursor(w / 2 - 70, timerY);
-    canvas_.printf("%02d:%02d", minutes, seconds);
+    char timeBuf[8];
+    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", minutes, seconds);
+    canvas_.drawString(timeBuf, w / 2, cy);
 
     canvas_.setTextSize(1);
-    canvas_.setCursor(w / 2 - 30, timerY + 45);
-    switch (state_) {
-        case PomodoroState::RUNNING: canvas_.print(paused_ ? "PAUSED" : "RUNNING"); break;
-        case PomodoroState::RINGING: canvas_.print("TIME'S UP!"); break;
-        default: canvas_.print("READY"); break;
-    }
+    canvas_.setTextColor(activeAccentColor(), COLOR_BG);
+    canvas_.drawString(statusText(), w / 2, cy + 38);
 
-    canvas_.setCursor(w / 2 - 44, timerY + 60);
-    canvas_.print(ImuOrientation::orientationName(currentOrientation_));
+    canvas_.setTextColor(COLOR_TEXT_DIM, COLOR_BG);
+    canvas_.drawString(ImuOrientation::orientationName(currentOrientation_), w / 2, cy + 53);
+    canvas_.setTextDatum(TL_DATUM);
 }
 
 void PomodoroUI::drawProgressRing() {
     int w = canvas_.width();
     int h = canvas_.height();
     int cx = w / 2;
-    int cy = h / 2 + 14;
-    int r = 38;
+    int cy = h / 2 + (h < 260 ? 10 : 18);
+    int r = (w < h ? w : h) / 5;
+    if (r < 42) r = 42;
+    if (r > 56) r = 56;
 
     unsigned long duration = presets_[activePreset_].durationMs;
     float progress = (duration > 0) ? (float)elapsed_ / duration : 0.0f;
     if (progress > 1.0f) progress = 1.0f;
 
-    canvas_.drawCircle(cx, cy, r, TFT_DARKGREY);
+    canvas_.fillCircle(cx, cy, r + 8, COLOR_PANEL_DARK);
+    canvas_.drawCircle(cx, cy, r + 8, COLOR_PANEL_LIGHT);
+    canvas_.drawCircle(cx, cy, r - 16, COLOR_PANEL_LIGHT);
 
-    int segments = 36;
+    int segments = 72;
+    int litSegments = (int)(progress * segments + 0.5f);
     for (int i = 0; i < segments; ++i) {
         float angle = -PI / 2 + (i / (float)segments) * 2 * PI;
-        float endAngle = -PI / 2 + ((i + 1) / (float)segments) * 2 * PI;
-        if ((float)i / segments <= progress) {
-            int x1 = cx + (int)((r - 2) * cos(angle));
-            int y1 = cy + (int)((r - 2) * sin(angle));
-            int x2 = cx + (int)((r - 2) * cos(endAngle));
-            int y2 = cy + (int)((r - 2) * sin(endAngle));
-            canvas_.drawLine(x1, y1, x2, y2, TFT_ORANGE);
-        }
+        int x = cx + (int)(r * cos(angle));
+        int y = cy + (int)(r * sin(angle));
+        canvas_.fillCircle(x, y, 2, COLOR_TRACK);
+    }
+    for (int i = 0; i < litSegments; ++i) {
+        float angle = -PI / 2 + (i / (float)segments) * 2 * PI;
+        int x = cx + (int)(r * cos(angle));
+        int y = cy + (int)(r * sin(angle));
+        canvas_.fillCircle(x, y, 3, activeAccentColor());
     }
 }
 
@@ -291,35 +410,44 @@ void PomodoroUI::drawControls() {
     canvas_.setTextSize(1);
     canvas_.setTextDatum(TL_DATUM);
 
-    uint16_t btnColor = (state_ == PomodoroState::IDLE || paused_) ? TFT_GREEN : TFT_ORANGE;
-    const char* label = (state_ == PomodoroState::IDLE || paused_) ? "Start" : "Pause";
-    canvas_.fillRoundRect(startX, btnY, BTN_W, BTN_H, 4, btnColor);
-    canvas_.setTextColor(TFT_WHITE, btnColor);
-    canvas_.setCursor(startX + 20, btnY + 8);
-    canvas_.print(label);
+    uint16_t startColor = (state_ == PomodoroState::IDLE || paused_) ? activeAccentColor() : COLOR_PANEL_LIGHT;
+    const char* label = (state_ == PomodoroState::IDLE || paused_) ? "START" : "PAUSE";
 
-    canvas_.fillRoundRect(resetX, btnY, BTN_W, BTN_H, 4, TFT_RED);
-    canvas_.setTextColor(TFT_WHITE, TFT_RED);
-    canvas_.setCursor(resetX + 16, btnY + 8);
-    canvas_.print("Reset");
+    canvas_.fillRoundRect(startX, btnY, BTN_W, BTN_H, 6, startColor);
+    canvas_.drawRoundRect(startX, btnY, BTN_W, BTN_H, 6, TFT_WHITE);
+    canvas_.setTextColor((state_ == PomodoroState::IDLE || paused_) ? TFT_BLACK : TFT_WHITE, startColor);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.drawString(label, startX + BTN_W / 2, btnY + BTN_H / 2 + 1);
+
+    canvas_.fillRoundRect(resetX, btnY, BTN_W, BTN_H, 6, COLOR_PANEL);
+    canvas_.drawRoundRect(resetX, btnY, BTN_W, BTN_H, 6, TFT_RED);
+    canvas_.setTextColor(TFT_RED, COLOR_PANEL);
+    canvas_.drawString("RESET", resetX + BTN_W / 2, btnY + BTN_H / 2 + 1);
+    canvas_.setTextDatum(TL_DATUM);
 }
 
 void PomodoroUI::drawBackButton() {
-    canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, TFT_DARKGREY);
-    canvas_.setTextColor(TFT_WHITE, TFT_DARKGREY);
+    canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, COLOR_PANEL);
+    canvas_.drawRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, COLOR_PANEL_LIGHT);
+    canvas_.setTextColor(TFT_WHITE, COLOR_PANEL);
     canvas_.setTextSize(1);
     canvas_.setTextDatum(MC_DATUM);
-    canvas_.setCursor(BACK_X + BACK_W / 2 - 16, BACK_Y + BACK_H / 2 - 4);
-    canvas_.print("Back");
+    canvas_.drawString("< Back", BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2 + 1);
     canvas_.setTextDatum(TL_DATUM);
 }
 
 void PomodoroUI::drawNotification() {
     int w = canvas_.width();
     int h = canvas_.height();
-    canvas_.fillRect(w / 2 - 90, h / 2 - 30, 180, 60, TFT_GREEN);
-    canvas_.setTextColor(TFT_WHITE, TFT_GREEN);
-    canvas_.setTextSize(3);
-    canvas_.setCursor(w / 2 - 70, h / 2 - 15);
-    canvas_.print("TIME'S UP!");
+    uint16_t accent = activeAccentColor();
+    canvas_.fillRoundRect(w / 2 - 92, h / 2 - 34, 184, 68, 8, COLOR_PANEL);
+    canvas_.drawRoundRect(w / 2 - 92, h / 2 - 34, 184, 68, 8, accent);
+    canvas_.setTextColor(accent, COLOR_PANEL);
+    canvas_.setTextSize(2);
+    canvas_.setTextDatum(MC_DATUM);
+    canvas_.drawString("TIME'S UP", w / 2, h / 2 - 8);
+    canvas_.setTextSize(1);
+    canvas_.setTextColor(TFT_WHITE, COLOR_PANEL);
+    canvas_.drawString("SESSION DONE", w / 2, h / 2 + 18);
+    canvas_.setTextDatum(TL_DATUM);
 }

@@ -55,10 +55,38 @@ static volatile bool gNeedActivationCheck = false;
 static volatile bool gNeedOpenAudioChannel = false;
 static bool gActivationCodeRequested = false;
 static unsigned long gLastActivationCheck = 0;
+static volatile bool gPomodoroCompletionPending = false;
+static volatile int gPomodoroCompletionPreset = 0;
+static bool gPomodoroFaceEmotionPending = false;
+static bool gPomodoroFaceEmotionActive = false;
+static FaceEmotion gPomodoroFaceEmotion = FaceEmotion::NORMAL;
+static unsigned long gPomodoroFaceEmotionUntil = 0;
+static bool gPomodoroMelodyActive = false;
+static bool gPomodoroMelodyErrorPrinted = false;
+static uint8_t gPomodoroMelodyIndex = 0;
+static unsigned long gPomodoroNextNoteAt = 0;
+
+struct PomodoroMelodyNote {
+    float frequency;
+    uint16_t durationMs;
+    uint16_t gapMs;
+};
+
+static constexpr PomodoroMelodyNote POMODORO_DONE_MELODY[] = {
+    {784.0f, 120, 25},
+    {988.0f, 120, 25},
+    {1175.0f, 160, 30},
+    {1568.0f, 240, 40},
+    {1319.0f, 180, 0}
+};
+static constexpr unsigned long POMODORO_FACE_EMOTION_MS = 4000;
 
 static void gestureEventHandler(const GestureEvent& event);
 static void stateChangeHandler(AppStateEnum state);
 static void handleEvent(const Event& event);
+static void handlePomodoroComplete(int presetIndex);
+static void processPomodoroCompletion(unsigned long now);
+static void updatePomodoroMelody(unsigned long now);
 
 static bool takeDisplayLock(TickType_t timeout = pdMS_TO_TICKS(20)) {
     return displayMutex == nullptr || xSemaphoreTake(displayMutex, timeout) == pdTRUE;
@@ -171,6 +199,7 @@ static void handleFaceTap(int x, int y) {
     int cx = DISPLAY_WIDTH / 2;
     int cy = DISPLAY_HEIGHT / 2;
     AppState& appState = AppState::instance();
+    gPomodoroFaceEmotionActive = false;
 
     if (y < cy / 2) {
         appState.setEmotion(FaceEmotion::HAPPY);
@@ -600,7 +629,15 @@ static void stateChangeHandler(AppStateEnum state) {
             gMenuUI.hide();
             gCameraDebugUI.hide();
             gPomodoroUI.hide();
-            AppState::instance().setEmotion(FaceEmotion::NORMAL);
+            if (gPomodoroFaceEmotionPending) {
+                gPomodoroFaceEmotionPending = false;
+                gPomodoroFaceEmotionActive = true;
+                gPomodoroFaceEmotionUntil = millis() + POMODORO_FACE_EMOTION_MS;
+                AppState::instance().setEmotion(gPomodoroFaceEmotion);
+            } else {
+                gPomodoroFaceEmotionActive = false;
+                AppState::instance().setEmotion(FaceEmotion::NORMAL);
+            }
             gSickActive = false;
             gSickUntil = 0;
             gActivationCodeRequested = false;
@@ -694,6 +731,61 @@ static void lowBatteryHandler(float voltage) {
 static void handleEvent(const Event& event) {
 }
 
+static FaceEmotion pomodoroEmotionForPreset(int presetIndex) {
+    switch (presetIndex) {
+        case 0: return FaceEmotion::HAPPY;
+        case 1: return FaceEmotion::SHY;
+        case 2: return FaceEmotion::CURIOUS;
+        case 3: return FaceEmotion::SLEEPY;
+        default: return FaceEmotion::NORMAL;
+    }
+}
+
+static void handlePomodoroComplete(int presetIndex) {
+    gPomodoroCompletionPreset = presetIndex;
+    gPomodoroCompletionPending = true;
+}
+
+static void startPomodoroMelody() {
+    gPomodoroMelodyActive = true;
+    gPomodoroMelodyErrorPrinted = false;
+    gPomodoroMelodyIndex = 0;
+    gPomodoroNextNoteAt = 0;
+}
+
+static void processPomodoroCompletion(unsigned long now) {
+    (void)now;
+    if (!gPomodoroCompletionPending) return;
+
+    int presetIndex = gPomodoroCompletionPreset;
+    gPomodoroCompletionPending = false;
+    gPomodoroFaceEmotion = pomodoroEmotionForPreset(presetIndex);
+    gPomodoroFaceEmotionPending = true;
+    gPomodoroFaceEmotionActive = false;
+    startPomodoroMelody();
+    Serial.printf("Pomodoro complete: preset=%d emotion=%d\n",
+                  presetIndex, static_cast<int>(gPomodoroFaceEmotion));
+}
+
+static void updatePomodoroMelody(unsigned long now) {
+    if (!gPomodoroMelodyActive || now < gPomodoroNextNoteAt) return;
+
+    constexpr uint8_t melodyCount = sizeof(POMODORO_DONE_MELODY) / sizeof(POMODORO_DONE_MELODY[0]);
+    if (gPomodoroMelodyIndex >= melodyCount) {
+        gPomodoroMelodyActive = false;
+        return;
+    }
+
+    const PomodoroMelodyNote& note = POMODORO_DONE_MELODY[gPomodoroMelodyIndex];
+    bool ok = M5.Speaker.tone(note.frequency, note.durationMs, 0, gPomodoroMelodyIndex == 0);
+    if (!ok && !gPomodoroMelodyErrorPrinted) {
+        gPomodoroMelodyErrorPrinted = true;
+        Serial.println("Pomodoro melody: speaker tone failed");
+    }
+    gPomodoroNextNoteAt = now + note.durationMs + note.gapMs;
+    gPomodoroMelodyIndex++;
+}
+
 static void bootStep(const char* msg, int line) {
     M5.Lcd.fillRect(0, line * 12, DISPLAY_WIDTH, 12, TFT_BLACK);
     M5.Lcd.setCursor(0, line * 12);
@@ -778,6 +870,7 @@ void setup() {
 
     bootStep("PomodoroUI...", 5);
     gPomodoroUI.begin();
+    gPomodoroUI.setCompleteCallback(handlePomodoroComplete);
 
     bootStep("WifiManager...", 6);
     gWifiManager.begin();
@@ -836,6 +929,9 @@ void setup() {
 void loop() {
     static unsigned long lastHeartbeat = 0;
     unsigned long now = millis();
+    processPomodoroCompletion(now);
+    updatePomodoroMelody(now);
+
     if (SERIAL_DIAGNOSTIC_HEARTBEAT && millis() - lastHeartbeat >= SERIAL_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = millis();
         Serial.printf("Alive: heap=%u, psram=%u, state=%d, wifi=%d, camera=%d\n",
@@ -865,6 +961,13 @@ void loop() {
         if (gSickActive && now >= gSickUntil) {
             gSickActive = false;
             if (AppState::instance().getEmotion() == FaceEmotion::SICK) {
+                AppState::instance().setEmotion(FaceEmotion::NORMAL);
+            }
+        }
+
+        if (gPomodoroFaceEmotionActive && now >= gPomodoroFaceEmotionUntil) {
+            gPomodoroFaceEmotionActive = false;
+            if (AppState::instance().getEmotion() == gPomodoroFaceEmotion) {
                 AppState::instance().setEmotion(FaceEmotion::NORMAL);
             }
         }

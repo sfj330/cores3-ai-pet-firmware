@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <M5GFX.h>
 #include "config/app_config.h"
 #include "vision/imu_orientation.h"
@@ -37,6 +38,7 @@ public:
 
     void togglePause();
     void reset();
+    void setCompleteCallback(std::function<void(int)> cb);
 
     PomodoroState getState() const;
     bool isVisible() const;
@@ -50,6 +52,13 @@ private:
     bool ensureSprite();
     void applyDisplayRotation(PomoOrientation o);
     uint8_t rotationForOrientation(PomoOrientation o) const;
+    int presetIndexForOrientation(PomoOrientation o) const;
+    void syncPresetToCurrentOrientation();
+    uint16_t accentColor(int index) const;
+    uint16_t activeAccentColor() const;
+    const char* shortPresetLabel(int index) const;
+    const char* statusText() const;
+    void drawBackground();
     void drawTimer();
     void drawProgressRing();
     void drawPresetSelector();
@@ -76,10 +85,13 @@ private:
     unsigned long ringStart_ = 0;
     bool paused_ = false;
     bool dirty_ = true;
+    bool selectionLocked_ = false;
+    bool completionNotified_ = false;
     unsigned long lastDrawTime_ = 0;
     PomoOrientation currentOrientation_ = PomoOrientation::FLAT;
     uint8_t baseRotation_ = 1;
     uint8_t appliedRotation_ = 1;
+    std::function<void(int)> completeCallback_ = nullptr;
 
     static constexpr int BACK_X = 5;
     static constexpr int BACK_Y = 5;
