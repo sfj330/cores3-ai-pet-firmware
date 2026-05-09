@@ -52,6 +52,7 @@ static bool gSickActive = false;
 static unsigned long gSickUntil = 0;
 static volatile bool gNeedActivationRequest = false;
 static volatile bool gNeedActivationCheck = false;
+static volatile bool gNeedOpenAudioChannel = false;
 static bool gActivationCodeRequested = false;
 static unsigned long gLastActivationCheck = 0;
 
@@ -87,11 +88,38 @@ static void drawAiOverlay() {
         return;
     }
 
-    if (gXiaoZhiClient.isActivated()) {
+    if (gXiaoZhiClient.isActivated() && gXiaoZhiClient.isConnected()) {
         M5.Lcd.setTextDatum(TC_DATUM);
         M5.Lcd.setTextSize(1);
         M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-        M5.Lcd.drawString("XiaoZhi AI - Activated", cx, 5);
+        M5.Lcd.drawString("XiaoZhi AI", cx, 5);
+
+        VoiceState vs = gXiaoZhiClient.getState();
+        const char* stateText = "Idle";
+        uint16_t stateColor = TFT_DARKGREY;
+        switch (vs) {
+            case VoiceState::LISTENING: stateText = "Listening..."; stateColor = TFT_CYAN; break;
+            case VoiceState::THINKING:  stateText = "Thinking...";  stateColor = TFT_YELLOW; break;
+            case VoiceState::SPEAKING:  stateText = "Speaking...";  stateColor = TFT_GREEN; break;
+            case VoiceState::ERROR:     stateText = "Error";        stateColor = TFT_RED; break;
+            default: break;
+        }
+        M5.Lcd.setTextColor(stateColor, TFT_BLACK);
+        M5.Lcd.drawString(stateText, cx, 20);
+
+        M5.Lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        M5.Lcd.drawString("Tap to talk | Right swipe back", cx, 230);
+        M5.Lcd.setTextDatum(TL_DATUM);
+        return;
+    }
+
+    if (gXiaoZhiClient.isActivated() && !gXiaoZhiClient.isConnected()) {
+        M5.Lcd.setTextDatum(TC_DATUM);
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+        M5.Lcd.drawString("XiaoZhi AI", cx, 80);
+        M5.Lcd.setTextColor(TFT_ORANGE, TFT_BLACK);
+        M5.Lcd.drawString("Connecting...", cx, 105);
         M5.Lcd.setTextDatum(TL_DATUM);
         return;
     }
@@ -312,7 +340,7 @@ void visionTask(void* pvParameters) {
 }
 
 void aiTask(void* pvParameters) {
-    const TickType_t delayTicks = pdMS_TO_TICKS(50);
+    const TickType_t delayTicks = pdMS_TO_TICKS(20);
 
     while (true) {
         if (gXiaoZhiClient.isConnected()) {
@@ -324,12 +352,24 @@ void aiTask(void* pvParameters) {
             if (!gXiaoZhiClient.isActivated()) {
                 Serial.println("AI task: requesting activation code...");
                 gXiaoZhiClient.requestActivationCode();
+                if (gXiaoZhiClient.isActivated()) {
+                    gNeedOpenAudioChannel = true;
+                }
             }
         }
 
         if (gNeedActivationCheck) {
             gNeedActivationCheck = false;
             gXiaoZhiClient.checkActivation();
+            if (gXiaoZhiClient.isActivated()) {
+                gNeedOpenAudioChannel = true;
+            }
+        }
+
+        if (gNeedOpenAudioChannel) {
+            gNeedOpenAudioChannel = false;
+            Serial.println("AI task: opening audio channel...");
+            gXiaoZhiClient.openAudioChannel();
         }
 
         vTaskDelay(delayTicks);
@@ -432,16 +472,22 @@ static void gestureEventHandler(const GestureEvent& event) {
         case AppStateEnum::AI:
             switch (event.type) {
                 case GestureType::RIGHT_SWIPE:
+                    gXiaoZhiClient.closeAudioChannel();
                     appState.setState(AppStateEnum::FACE);
                     break;
                 case GestureType::SINGLE_TAP:
-                    if (!gXiaoZhiClient.isActivated() && gWifiManager.isConnected()) {
+                    if (gXiaoZhiClient.isActivated()) {
+                        if (gXiaoZhiClient.getState() == VoiceState::LISTENING) {
+                            gXiaoZhiClient.stopListening();
+                        } else {
+                            gXiaoZhiClient.startListening();
+                        }
+                    } else if (gWifiManager.isConnected()) {
                         gNeedActivationRequest = true;
                     }
-                    appState.setEmotion(FaceEmotion::LISTENING);
-                    gFaceUI.setTemporaryGaze(0.0f, -0.3f, 800);
                     break;
                 case GestureType::LONG_PRESS:
+                    gXiaoZhiClient.closeAudioChannel();
                     appState.setState(AppStateEnum::FACE);
                     break;
                 default:
@@ -573,7 +619,9 @@ static void stateChangeHandler(AppStateEnum state) {
             gPomodoroUI.hide();
             if (gWifiManager.isConnected()) {
                 AppState::instance().setEmotion(FaceEmotion::LISTENING);
-                if (!gXiaoZhiClient.isActivated() && !gXiaoZhiClient.hasActivationCode() && !gActivationCodeRequested) {
+                if (gXiaoZhiClient.isActivated()) {
+                    gNeedOpenAudioChannel = true;
+                } else if (!gXiaoZhiClient.hasActivationCode() && !gActivationCodeRequested) {
                     gNeedActivationRequest = true;
                     gActivationCodeRequested = true;
                 }

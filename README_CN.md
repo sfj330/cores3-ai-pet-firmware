@@ -1,23 +1,23 @@
 # CoreS3 AI 桌面宠物交互系统
 
-基于 M5Stack CoreS3 (ESP32-S3) 的 AI 桌面宠物固件，面向嵌入式比赛演示。项目聚焦于触控驱动表情交互、摄像头调试拍照、Wi-Fi 状态显示、SD 卡照片存储、IMU 番茄钟交互、摇晃触发"晕"表情以及小智 AI 占位界面。
+这是一个基于 M5Stack CoreS3 的嵌入式比赛演示固件。项目包含表情桌宠、触摸手势、Wi-Fi、Camera Debug、SD 拍照路径、IMU 番茄钟、摇晃难受表情，以及已经接通的小智 AI 语音助手链路。
 
 ## 当前状态
 
-- **表情 UI**：触控表情切换、眼球视线、眨眼动画、摇晃机身触发"晕"表情
-- **功能菜单**：Wi-Fi 状态、摄像头调试、番茄钟、系统信息
-- **摄像头调试**：实时预览、返回按钮、拍照按钮、JPEG 保存到 SD 卡
-- **番茄钟**：IMU 姿态选择预设时长、四方向屏幕旋转
-- **小智 AI**：仅占位界面。真实设备验证、WebSocket、OPUS、麦克风和扬声器流式传输尚未实现
-- **人脸检测**：已禁用。没有启用人脸检测和肤色检测
+- 表情界面：触摸切换表情、眨眼、眼球视线、摇晃机身触发 SICK 难受表情。
+- 功能菜单：显示 Wi-Fi 状态、Camera Debug、番茄钟、系统信息。
+- Camera Debug：预览、Back、SHOT 拍照按钮，SD 可用时保存 JPEG。
+- 番茄钟：通过 IMU 选择预设，并支持四方向屏幕旋转。
+- 小智 AI：已实现 OTA 激活请求、WebSocket、Opus 麦克风上传、Opus TTS 播放、最小 MCP 握手。
+- 人脸检测：已关闭，不启用假检测或肤色检测。
 
-## 硬件要求
+## 硬件
 
 - M5Stack CoreS3
-- MicroSD/TF 卡（FAT/FAT32 格式）
+- FAT/FAT32 格式 MicroSD/TF 卡，用于 Camera Debug 拍照保存
 - 可选底座硬件：电池、PCA9685、舵机
 
-本固件使用的 CoreS3 SD 卡 SPI 引脚：
+CoreS3 SD 卡 SPI 引脚：
 
 ```text
 SCK  36
@@ -26,19 +26,20 @@ MOSI 37
 CS   4
 ```
 
-## 软件要求
+## 软件环境
 
-- Windows 系统，已安装 PlatformIO
-- USB 数据线连接 CoreS3
+- Windows
+- PlatformIO
 - Git
+- USB 数据线连接 CoreS3
 
-本项目使用本地 PlatformIO 可执行文件构建：
+本项目当前使用的 PlatformIO 路径：
 
 ```powershell
 C:\Users\shenf\.platformio\penv\Scripts\platformio.exe
 ```
 
-## 克隆项目
+## 下载项目
 
 ```powershell
 git clone https://github.com/sfj330/cores3.git
@@ -47,15 +48,13 @@ cd cores3
 
 ## Wi-Fi 配置
 
-真实凭据不入 Git 仓库。
-
-1. 复制示例文件：
+真实 Wi-Fi 密码不进入 Git。
 
 ```powershell
 Copy-Item src\config\wifi_secrets.example.h src\config\wifi_secrets.h
 ```
 
-2. 编辑 `src\config\wifi_secrets.h`：
+编辑 `src\config\wifi_secrets.h`：
 
 ```cpp
 #pragma once
@@ -63,7 +62,7 @@ constexpr const char* WIFI_SSID = "你的WiFi名称";
 constexpr const char* WIFI_PASSWORD = "你的WiFi密码";
 ```
 
-`src/config/wifi_secrets.h` 已被 Git 忽略。
+`src/config/wifi_secrets.h` 已被 `.gitignore` 忽略。
 
 ## 编译
 
@@ -71,23 +70,28 @@ constexpr const char* WIFI_PASSWORD = "你的WiFi密码";
 C:\Users\shenf\.platformio\penv\Scripts\platformio.exe run
 ```
 
-预期结果：`m5stack-cores3` 平台编译成功。
+当前小智 AI 版本依赖：
+
+- `links2004/WebSockets`
+- `sh123/esp32_opus`
+- `bblanchon/ArduinoJson`
+- `M5CoreS3`、`M5Unified`、`M5GFX`
 
 ## 烧录
 
-先尝试自动烧录：
+自动烧录：
 
 ```powershell
 C:\Users\shenf\.platformio\penv\Scripts\platformio.exe run -t upload
 ```
 
-如果自动检测端口失败，手动指定当前已知端口：
+如果自动端口检测失败，可指定当前端口：
 
 ```powershell
 C:\Users\shenf\.platformio\penv\Scripts\platformio.exe run -t upload --upload-port COM5
 ```
 
-如果烧录无法启动，长按 RESET 键约 3 秒进入下载模式。烧录完成后按一次 RESET 运行固件。
+如果烧录无法开始，长按 RESET 约 3 秒进入下载模式。烧录完成后，再按一次 RESET 运行固件。
 
 ## 串口监视
 
@@ -95,139 +99,108 @@ C:\Users\shenf\.platformio\penv\Scripts\platformio.exe run -t upload --upload-po
 C:\Users\shenf\.platformio\penv\Scripts\platformio.exe device monitor -p COM5 -b 115200
 ```
 
-正常启动日志应包含：
+小智 AI 正常日志应包含：
 
-- `CoreS3 AI Pet Boot`
-- `FaceDetector: disabled by configuration`
-- `Face detection off`
-- 各任务创建日志
-- Wi-Fi 连接尝试（如果已配置 Wi-Fi）
-- SD 卡探测日志，如 `SD try 25 MHz`
+```text
+AI task: requesting activation code...
+XiaoZhi: OTA POST identity=m5stack-core-s3/2.2.6
+XiaoZhi: device activated, got WS config
+XiaoZhi: WS connected
+XiaoZhi: session_id=...
+XiaoZhi: MCP method=initialize id=1
+XiaoZhi: MCP method=tools/list id=2
+XiaoZhi: sent listen start
+XiaoZhi: WS text: {"type":"stt",...}
+XiaoZhi: WS text: {"type":"tts",...}
+```
 
-## 操作说明
+## 操作方式
 
-- **表情页面**：
-  - 右滑：打开功能菜单
-  - 左滑或双击：打开小智 AI 占位界面
-  - 点击上方：开心
-  - 点击下方：害羞
-  - 点击左/右：好奇 + 视线方向
-  - 摇晃机身："晕"表情约 2 秒
+- 表情页：
+  - 右滑：进入菜单
+  - 左滑或双击：进入小智 AI
+  - 点击上方：HAPPY
+  - 点击下方：SHY
+  - 点击左/右：CURIOUS 并改变视线
+  - 摇晃机身：SICK 难受表情约 2 秒
   - 长按：休眠
-- **AI 页面**：
-  - 显示小智占位界面和设备验证提示
-  - 右滑或长按：返回表情页面
-- **功能菜单**：
+- AI 页：
+  - Wi-Fi 可用后连接小智服务
+  - 单击切换监听状态
+  - 右滑或长按返回表情页
+- 菜单页：
   - 点击当前卡片进入对应功能
   - 右滑切换卡片
-  - 返回按钮回到表情页面
-- **摄像头调试**：
-  - 点击 SHOT 保存 `/photos/IMG_####.jpg` 到 SD 卡
-  - 返回按钮或左滑回到菜单
-- **番茄钟**：
-  - 旋转设备选择计时预设，界面同步旋转
-  - 开始/暂停和重置按钮控制计时
+  - Back 返回表情页
+- Camera Debug：
+  - SHOT 在 SD 可用时保存 `/photos/IMG_####.jpg`
+  - Back 或左滑返回菜单
+- 番茄钟：
+  - 旋转设备选择计时预设并旋转界面
+  - Start/Pause 和 Reset 控制计时器
 
-## 系统架构
+## 小智 AI 是怎么做的
 
-```
-src/
-├── main.cpp                       // 入口、任务创建、事件分发
-├── app/
-│   ├── app_state.h/.cpp           // 主状态机
-│   ├── gesture_manager.h/.cpp     // 手势识别（单击/双击/长按/滑动）
-│   └── event_bus.h/.cpp           // 模块间事件总线
-├── ui/
-│   ├── face_ui.h/.cpp             // 表情渲染（8 种表情 + 眼球视线）
-│   ├── menu_ui.h/.cpp             // 右滑功能菜单
-│   ├── camera_debug_ui.h/.cpp     // 摄像头调试页面
-│   └── pomodoro_ui.h/.cpp         // 番茄钟页面
-├── vision/
-│   ├── camera_manager.h/.cpp      // 摄像头采集管理
-│   ├── face_detector.h/.cpp       // 人脸检测接口
-│   ├── face_tracker.h/.cpp        // 人脸中心平滑追踪
-│   └── imu_orientation.h/.cpp     // IMU 姿态识别
-├── ai/
-│   ├── xiaozhi_client.h/.cpp      // 小智 AI 客户端（占位）
-│   └── voice_state.h              // 语音状态定义
-├── network/
-│   └── wifi_manager.h/.cpp        // Wi-Fi 连接管理
-├── storage/
-│   └── storage_manager.h/.cpp     // SD 卡照片存储
-├── power/
-│   └── power_manager.h/.cpp       // 电池/电源管理
-└── config/
-    └── app_config.h               // 全局参数配置
-```
+核心代码在 `src/ai/xiaozhi_client.h` 和 `src/ai/xiaozhi_client.cpp`。
 
-### FreeRTOS 任务
+整体流程：
 
-| 任务 | 功能 | 频率 |
-|------|------|------|
-| UI | 表情/菜单/摄像头/番茄钟渲染 | 20 FPS |
-| Touch | 触控点读取 + 手势识别 | 50 Hz |
-| Camera | 摄像头帧采集 | 15 FPS |
-| Vision | 人脸检测 / 视线追踪 | 5 FPS |
-| AI | 小智 AI 交互处理 | 20 Hz |
-| Power | 电池电压 / 低电量保护 | 1 Hz |
-| Network | Wi-Fi 状态更新 | 5 秒间隔 |
+1. 在表情页左滑或双击进入 AI 页。
+2. AI 任务确认 Wi-Fi 已连接后，向小智 OTA 接口发起激活/配置请求。
+3. OTA 请求带上 CoreS3 身份信息，包括设备 MAC、生成的 Client UUID、固件身份 `m5stack-core-s3/2.2.6`、芯片信息、Flash 大小和应用版本。
+4. OTA 响应返回 WebSocket URL 和 token。本项目不在本地伪造验证码。
+5. 设备建立 TLS WebSocket，并发送以下握手头：
+   - `Authorization: Bearer <token>`
+   - `Protocol-Version`
+   - `Device-Id`
+   - `Client-Id`
+6. 设备发送 `hello` JSON：
+   - transport 为 `websocket`
+   - 音频格式为 `opus`
+   - 麦克风输入为 16 kHz 单声道
+   - 每帧 60 ms
+   - 开启 MCP 能力
+7. 服务端返回 session id 和 TTS 音频参数，目前观察到服务端 TTS 为 24 kHz Opus。
+8. 设备完成 MCP 最小握手：
+   - `initialize`：返回协议版本、空工具能力和设备信息。
+   - `tools/list`：返回空工具列表。
+   - `tools/call`：明确返回未实现错误，不伪造设备工具。
+9. MCP 完成后设备发送 `listen start`。
+10. 麦克风采集 16 kHz PCM，编码为 Opus，通过 WebSocket binary frame 上传。
+11. 服务端返回的 binary Opus 音频被解码为 PCM，再通过 CoreS3 扬声器播放。
 
-### 状态机
+CoreS3 的麦克风和扬声器不能同时运行，所以当前实现是半双工：
 
-```
-FACE ←→ MENU ←→ CAMERA_DEBUG
-  │
-  ├── AI
-  ├── POMODORO
-  └── SLEEP
-```
+- 监听时：关闭扬声器，打开麦克风，上传 Opus 音频。
+- 说话时：关闭麦克风，打开扬声器，播放服务端 TTS。
+- 收到 `tts stop` 后，如果仍处于 AI 监听模式，就重新发送 `listen start`。
 
-### 手势优先级
+音频细节：
 
-双击 > 右滑/左滑 > 长按 > 单击
+- Opus 编码：16 kHz 单声道，60 ms 帧，目标码率 24 kbps。
+- Opus 解码：按服务端 hello 返回的采样率创建 decoder，目前是 24 kHz。
+- 扬声器输出：M5Unified Speaker，48 kHz I2S 输出，三缓冲内部 RAM 播放，不再每帧打断当前声音。
+- AudioCap 任务栈已增大，避免 Opus 编码导致栈溢出。
 
-- 双击窗口：250-350ms
-- 长按阈值：800ms+
+## 已知限制
 
-## 关于小智 AI
+- 小智语音链路已接通，但还没有暴露自定义 MCP 设备工具。
+- 音乐或长 TTS 播放效果取决于小智服务端和 CoreS3 内置扬声器能力。
+- CoreS3 内置麦克风/扬声器是半双工，当前没有实现全双工打断或回声消除。
+- SD 卡识别仍受卡格式、接触和供电影响；固件不应因无卡重启，但拍照保存需要可用 FAT/FAT32 卡。
+- 人脸检测仍然关闭。
 
-本固件不生成真实的小智验证码。在官方小智流程中，设备固件连接小智服务后会显示或播报一个验证码，用户在控制台"添加设备"流程中输入该码完成绑定。
+## 人脸检测说明
 
-参考资料：
+当前 Arduino/PlatformIO 构建不启用真实人脸检测。之前的肤色检测方案可能误检，不能代表真实人脸识别效果，因此已经停用。
 
-- [M5Stack CoreS3 XiaoZhi 指南](https://docs.m5stack.switch-science.com/en/guide/realtime/xiaozhi/m5cores3)
-- [XiaoZhi WebSocket 协议](https://home.xiaozhi.me/xz-docs/docs/tutorial-comm/websocket-comm/)
-
-未来真实接入需要：OTA 激活、WebSocket 协议处理、OPUS 音频编解码、麦克风采集、扬声器播放。
-
-## 关于人脸检测
-
-人脸检测在当前 Arduino/PlatformIO 构建中有意禁用。之前的肤色检测方案会产生误检，不能代表真实的人脸识别效果，因此不再使用。
-
-未来真实人脸检测应使用经过验证的 ESP-DL/ESP-WHO 集成方案，建议通过 ESP-IDF 或 Arduino-as-IDF-component 方式实现。
-
-## 开发路线
-
-| 阶段 | 内容 |
-|------|------|
-| 1 | UI 原型 — 表情、触控手势、右滑菜单（无摄像头/AI） |
-| 2 | 外设验证 — 屏幕、触摸、扬声器、麦克风、Wi-Fi、摄像头调试 |
-| 3 | 背景视觉 — 人脸检测 + 视线追踪（摄像头隐藏在表情 UI 后方） |
-| 4 | 小智 AI — 双击进入语音交互，AI 回复时同步表情 |
-| 5 | 舵机追踪 — PCA9685 + 2 轴舵机与眼球视线同步 |
-| 6 | 番茄钟完善 & 比赛封装 |
+未来如果要做真实人脸检测，应优先验证 ESP-DL/ESP-WHO 与 ESP-IDF 或 Arduino-as-IDF-component 的集成路径。
 
 ## 故障排查
 
-- **烧录失败或循环重试**：长按 RESET 约 3 秒后重新烧录，烧录完成后按一次 RESET
-- **SD 卡未识别**：格式化为 FAT/FAT32，重新插入，检查串口日志中的 `SD.begin failed`、`CARD_NONE`、`Root open failed` 或 `Probe write failed`
-- **无 Wi-Fi**：检查 `src/config/wifi_secrets.h` 中的 SSID、密码和信号强度
-- **摄像头预览黑屏或闪烁**：系统完全启动后再进入摄像头调试，检查串口日志确认 PSRAM 已识别
-
-## 技术栈
-
-- **平台**：ESP32-S3 (M5Stack CoreS3)
-- **框架**：Arduino + FreeRTOS
-- **构建工具**：PlatformIO
-- **核心库**：M5CoreS3、M5Unified、M5GFX
-- **编程语言**：C++17
+- 烧录失败或重启循环：长按 RESET 约 3 秒后重新烧录，烧录完成后按一次 RESET。
+- 小智 OTA 返回 `400`：检查 `XIAOZHI_BOARD_TYPE`、`XIAOZHI_FIRMWARE_VERSION` 和串口里的 OTA identity。
+- 小智 WebSocket 在 MCP 后断开：检查串口里是否先出现 `initialize`、`tools/list`，再出现 `sent listen start`。
+- 没有 AI 回复：确认 Wi-Fi 已连接，进入 AI 页后查看串口是否有 `WS connected`、`session_id`、`sent listen start`、`stt` 和 `tts`。
+- 扬声器杂音：确认已烧录最新固件；当前版本使用内部 RAM 三缓冲和 48 kHz Speaker 输出。
+- SD 未识别：格式化为 FAT/FAT32，重新插入，查看串口中的 `SD.begin failed`、`CARD_NONE`、`Root open failed` 或 `Probe write failed`。
