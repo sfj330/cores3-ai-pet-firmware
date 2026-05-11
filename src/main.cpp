@@ -62,7 +62,6 @@ static unsigned long gSickUntil = 0;
 static volatile bool gNeedActivationRequest = false;
 static volatile bool gNeedActivationCheck = false;
 static volatile bool gNeedOpenAudioChannel = false;
-static volatile bool gPomodoroOpenPending = false;
 static bool gActivationCodeRequested = false;
 static unsigned long gLastActivationCheck = 0;
 static volatile bool gPomodoroCompletionPending = false;
@@ -76,6 +75,50 @@ static bool gPomodoroMelodyErrorPrinted = false;
 static uint8_t gPomodoroMelodyIndex = 0;
 static unsigned long gPomodoroNextNoteAt = 0;
 
+enum class PendingAiTool : uint8_t {
+    NONE = 0,
+    CAMERA_OPEN,
+    CAMERA_CLOSE,
+    CAMERA_CAPTURE_PHOTO,
+    VISION_DESCRIBE,
+    POMODORO_OPEN,
+    MUSIC_CONTROL,
+    PET_REACT
+};
+
+enum class MusicAction : uint8_t {
+    NONE = 0,
+    PLAY_PAUSE,
+    STOP,
+    NEXT
+};
+
+enum class PetReaction : uint8_t {
+    NONE = 0,
+    HAPPY,
+    SHY,
+    CURIOUS,
+    SLEEPY,
+    SURPRISED,
+    SICK
+};
+
+static volatile PendingAiTool gPendingAiTool = PendingAiTool::NONE;
+static int gPendingAiCallId = -1;
+static int gPendingAiIntParam = 0;
+static volatile bool gPendingAiBoolParam = false;
+static volatile MusicAction gPendingAiMusicAction = MusicAction::NONE;
+static volatile PetReaction gPendingAiPetReaction = PetReaction::NONE;
+
+static AppStateEnum gPomodoroReturnTo = AppStateEnum::MENU;
+static AppStateEnum gMusicReturnTo = AppStateEnum::MENU;
+
+static bool gPetReactActive = false;
+static FaceEmotion gPetReactEmotion = FaceEmotion::NORMAL;
+static FaceEmotion gPetReactPrevEmotion = FaceEmotion::NORMAL;
+static unsigned long gPetReactUntil = 0;
+static constexpr unsigned long PET_REACT_DURATION_MS = 4000;
+
 enum class AiVisionStatus {
     IDLE,
     OPENING,
@@ -88,9 +131,6 @@ enum class AiVisionStatus {
 static AiVisionStatus gAiVisionStatus = AiVisionStatus::IDLE;
 static String gAiVisionStatusText = "Vision idle";
 static String gAiVisionResultText = "";
-static volatile bool gAiVisionOpenPending = false;
-static volatile bool gAiVisionDescribePending = false;
-static int gAiVisionMcpCallId = -1;
 
 struct PomodoroMelodyNote {
     float frequency;
@@ -115,10 +155,10 @@ static void processPomodoroCompletion(unsigned long now);
 static void updatePomodoroMelody(unsigned long now);
 static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst arguments, int callId);
 static void handleXiaoZhiTranscript(const String& text);
-static void processAiVisionVoiceFallback();
-static void processPomodoroOpenRequest();
+static void processPendingAiTool();
 static String describeAiVisionScene(JsonObjectConst arguments, bool& ok);
 static bool ensureAiVisionPreview(const char* status);
+static void closeAiVisionPreview();
 static void setAiVisionStatus(AiVisionStatus status, const char* text, const char* result = nullptr);
 static void updateInfoUiData();
 static void updateMusicUiData();
@@ -525,73 +565,410 @@ static void handleXiaoZhiTranscript(const String& text) {
                         containsAny(text, "打开计时器", "进入计时器", "专注计时") ||
                         (containsAny(text, "打开", "进入", "切到") &&
                          containsAny(text, "番茄钟", "计时器", "专注"));
+    bool asksCapture = containsAny(text, "拍张照", "拍照", "保存照片") ||
+                       containsAny(text, "照一张", "拍一张", "照张相") ||
+                       containsAny(text, "拍个照") ||
+                       containsAny(lower, "take photo", "capture", "save photo");
+    bool asksMusicPlay = containsAny(text, "播放音乐", "放音乐", "播放歌曲") ||
+                         containsAny(text, "放首歌") ||
+                         containsAny(lower, "play music", "play song");
+    bool asksMusicPause = containsAny(text, "暂停音乐", "暂停播放", "音乐暂停");
+    bool asksMusicStop = containsAny(text, "停止音乐", "关掉音乐", "关闭音乐") ||
+                         containsAny(text, "别放了");
+    bool asksMusicNext = containsAny(text, "下一首", "换一首", "切歌") ||
+                         containsAny(text, "换个歌");
+    bool asksReact = containsAny(text, "开心一下", "卖个萌", "害羞一下") ||
+                     containsAny(text, "装困", "惊讶一下", "好奇一下") ||
+                     containsAny(text, "卖萌", "做个鬼脸") ||
+                     containsAny(text, "生个病", "装病");
 
     if (asksDescribe) {
-        gAiVisionDescribePending = true;
+        gPendingAiTool = PendingAiTool::VISION_DESCRIBE;
+        gPendingAiCallId = -1;
         Serial.println("AI transcript fallback: describe scene");
+    } else if (asksCapture) {
+        gPendingAiTool = PendingAiTool::CAMERA_CAPTURE_PHOTO;
+        gPendingAiCallId = -1;
+        Serial.println("AI transcript fallback: capture photo");
     } else if (asksPomodoro) {
-        gPomodoroOpenPending = true;
+        gPendingAiTool = PendingAiTool::POMODORO_OPEN;
+        gPendingAiCallId = -1;
+        gPendingAiIntParam = 0;
+        gPendingAiBoolParam = false;
+        if (containsAny(text, "50分钟", "五十分钟")) {
+            gPendingAiIntParam = 50;
+            gPendingAiBoolParam = true;
+        } else if (containsAny(text, "25分钟", "二十五分钟")) {
+            gPendingAiIntParam = 25;
+            gPendingAiBoolParam = true;
+        } else if (containsAny(text, "15分钟", "十五分钟")) {
+            gPendingAiIntParam = 15;
+            gPendingAiBoolParam = true;
+        } else if (containsAny(text, "5分钟", "五分钟")) {
+            gPendingAiIntParam = 5;
+            gPendingAiBoolParam = true;
+        }
+        if (containsAny(text, "开始", "启动", "倒计时") || containsAny(text, "计时")) {
+            gPendingAiBoolParam = true;
+        }
         Serial.println("AI transcript fallback: open pomodoro");
+    } else if (asksMusicPlay) {
+        gPendingAiTool = PendingAiTool::MUSIC_CONTROL;
+        gPendingAiCallId = -1;
+        gPendingAiMusicAction = MusicAction::PLAY_PAUSE;
+        Serial.println("AI transcript fallback: music play");
+    } else if (asksMusicPause) {
+        gPendingAiTool = PendingAiTool::MUSIC_CONTROL;
+        gPendingAiCallId = -1;
+        gPendingAiMusicAction = MusicAction::PLAY_PAUSE;
+        Serial.println("AI transcript fallback: music pause");
+    } else if (asksMusicStop) {
+        gPendingAiTool = PendingAiTool::MUSIC_CONTROL;
+        gPendingAiCallId = -1;
+        gPendingAiMusicAction = MusicAction::STOP;
+        Serial.println("AI transcript fallback: music stop");
+    } else if (asksMusicNext) {
+        gPendingAiTool = PendingAiTool::MUSIC_CONTROL;
+        gPendingAiCallId = -1;
+        gPendingAiMusicAction = MusicAction::NEXT;
+        Serial.println("AI transcript fallback: music next");
+    } else if (asksReact) {
+        gPendingAiTool = PendingAiTool::PET_REACT;
+        gPendingAiCallId = -1;
+        if (containsAny(text, "开心", "卖萌", "萌")) {
+            gPendingAiPetReaction = PetReaction::HAPPY;
+        } else if (containsAny(text, "害羞")) {
+            gPendingAiPetReaction = PetReaction::SHY;
+        } else if (containsAny(text, "好奇")) {
+            gPendingAiPetReaction = PetReaction::CURIOUS;
+        } else if (containsAny(text, "困", "装困")) {
+            gPendingAiPetReaction = PetReaction::SLEEPY;
+        } else if (containsAny(text, "惊讶")) {
+            gPendingAiPetReaction = PetReaction::SURPRISED;
+        } else if (containsAny(text, "病", "装病", "生个病")) {
+            gPendingAiPetReaction = PetReaction::SICK;
+        } else {
+            gPendingAiPetReaction = PetReaction::HAPPY;
+        }
+        Serial.println("AI transcript fallback: pet react");
     } else if (asksOpen) {
-        gAiVisionOpenPending = true;
+        gPendingAiTool = PendingAiTool::CAMERA_OPEN;
+        gPendingAiCallId = -1;
         Serial.println("AI transcript fallback: open camera");
     }
 }
 
-static void processAiVisionVoiceFallback() {
-    if (gAiVisionDescribePending) {
-        gAiVisionDescribePending = false;
-        int callId = gAiVisionMcpCallId;
-        gAiVisionMcpCallId = -1;
-
-        if (!gXiaoZhiClient.hasVisionEndpoint()) {
-            setAiVisionStatus(AiVisionStatus::ERROR, "Vision service missing", "No vision endpoint");
-            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Vision service is not available.", true);
-            return;
-        }
-
-        if (!ensureAiVisionPreview("Preparing vision")) {
-            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Camera is unavailable.", true);
-            return;
-        }
-
-        setAiVisionStatus(AiVisionStatus::RECOGNIZING, "Recognizing...", "");
-        CameraJpeg jpeg;
-        String status;
-        if (!gCameraManager.captureJpegToMemory(jpeg, status)) {
-            setAiVisionStatus(AiVisionStatus::ERROR, status.c_str(), status.c_str());
-            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Camera capture failed: " + status, true);
-            return;
-        }
-
-        String description;
-        bool visionOk = gVisionClient.describeImage(gXiaoZhiClient.getVisionUrl().c_str(),
-                                                    gXiaoZhiClient.getVisionToken().c_str(),
-                                                    jpeg.data, jpeg.length,
-                                                    description, status);
-        gCameraManager.releaseJpeg(jpeg);
-
-        if (!visionOk) {
-            setAiVisionStatus(AiVisionStatus::ERROR, status.c_str(), status.c_str());
-            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Recognition failed: " + status, true);
-            return;
-        }
-
-        setAiVisionStatus(AiVisionStatus::DONE, "Vision result", description.c_str());
-        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "I can see: " + description, false);
+static void processCameraOpen(int callId) {
+    gXiaoZhiClient.pauseForForegroundTool();
+    bool ok = ensureAiVisionPreview("Camera on");
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId,
+            ok ? "Camera is open. I can look through the CoreS3 camera now." : "Camera failed to open.",
+            !ok);
     }
+}
 
-    if (gAiVisionOpenPending) {
-        gAiVisionOpenPending = false;
-        int callId = gAiVisionMcpCallId;
-        gAiVisionMcpCallId = -1;
+static void processCameraClose(int callId) {
+    closeAiVisionPreview();
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, "Camera is closed.", false);
+    }
+}
 
-        bool ok = ensureAiVisionPreview("Camera on");
+static void processCameraCapturePhoto(int callId) {
+    gXiaoZhiClient.pauseForForegroundTool();
+
+    if (!ensureAiVisionPreview("Capturing...")) {
         if (callId >= 0) {
             gXiaoZhiClient.queueMcpToolTextResult(callId,
-                ok ? "Camera is open. I can look through the CoreS3 camera now." : "Camera failed to open.",
-                !ok);
+                "Camera failed to open, cannot capture photo.", true);
         }
+        return;
+    }
+
+    if (!gStorageManager.ensureReady()) {
+        if (callId >= 0) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId,
+                "SD card not available: " + gStorageManager.statusText(), true);
+        }
+        return;
+    }
+
+    String path = gStorageManager.nextPhotoPath();
+    if (path.length() == 0) {
+        if (callId >= 0) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, "Failed to generate photo path.", true);
+        }
+        return;
+    }
+
+    String status;
+    bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
+    if (ok) {
+        Serial.printf("Voice photo saved: %s\n", path.c_str());
+        if (callId >= 0) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, "Photo saved: " + path, false);
+        }
+    } else {
+        Serial.printf("Voice photo failed: %s\n", status.c_str());
+        if (callId >= 0) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, "Photo capture failed: " + status, true);
+        }
+    }
+}
+
+static void processVisionDescribe(int callId) {
+    gXiaoZhiClient.pauseForForegroundTool();
+
+    if (!gXiaoZhiClient.hasVisionEndpoint()) {
+        setAiVisionStatus(AiVisionStatus::ERROR, "Vision service missing", "No vision endpoint");
+        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Vision service is not available.", true);
+        return;
+    }
+
+    if (!ensureAiVisionPreview("Preparing vision")) {
+        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Camera is unavailable.", true);
+        return;
+    }
+
+    setAiVisionStatus(AiVisionStatus::RECOGNIZING, "Recognizing...", "");
+    CameraJpeg jpeg;
+    String status;
+    if (!gCameraManager.captureJpegToMemory(jpeg, status)) {
+        setAiVisionStatus(AiVisionStatus::ERROR, status.c_str(), status.c_str());
+        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Camera capture failed: " + status, true);
+        return;
+    }
+
+    String description;
+    bool visionOk = gVisionClient.describeImage(gXiaoZhiClient.getVisionUrl().c_str(),
+                                                gXiaoZhiClient.getVisionToken().c_str(),
+                                                jpeg.data, jpeg.length,
+                                                description, status);
+    gCameraManager.releaseJpeg(jpeg);
+
+    if (!visionOk) {
+        setAiVisionStatus(AiVisionStatus::ERROR, status.c_str(), status.c_str());
+        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "Recognition failed: " + status, true);
+        return;
+    }
+
+    setAiVisionStatus(AiVisionStatus::DONE, "Vision result", description.c_str());
+    if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "I can see: " + description, false);
+}
+
+static int pomodoroPresetForMinutes(int minutes) {
+    switch (minutes) {
+        case 25: return 0;
+        case 5:  return 1;
+        case 15: return 2;
+        case 50: return 3;
+        default: return -1;
+    }
+}
+
+static const char* pomodoroMinutesLabel(int minutes) {
+    switch (minutes) {
+        case 25: return "Focus 25m";
+        case 5:  return "Short 5m";
+        case 15: return "Long 15m";
+        case 50: return "Deep 50m";
+        default: return "Custom";
+    }
+}
+
+static void processPomodoroOpen(int callId) {
+    int minutes = gPendingAiIntParam;
+    bool autoStart = gPendingAiBoolParam;
+
+    gXiaoZhiClient.pauseForForegroundTool();
+
+    if (AppState::instance().getState() == AppStateEnum::AI_VISION) {
+        gCameraManager.stopCapture();
+        gCameraDebugUI.setCameraReady(false);
+        setAiVisionStatus(AiVisionStatus::IDLE, "Vision closed", "");
+    }
+
+    gPomodoroReturnTo = AppStateEnum::AI;
+    AppState::instance().setState(AppStateEnum::POMODORO);
+
+    if (minutes > 0) {
+        int preset = pomodoroPresetForMinutes(minutes);
+        if (preset >= 0) {
+            gPomodoroUI.selectPreset(preset);
+        }
+    }
+
+    if (autoStart && gPomodoroUI.getState() == PomodoroState::IDLE) {
+        gPomodoroUI.togglePause();
+    }
+
+    gPomodoroUI.markDirty();
+
+    String resultMsg = "Pomodoro page opened.";
+    if (minutes > 0) {
+        int preset = pomodoroPresetForMinutes(minutes);
+        if (preset >= 0) {
+            resultMsg = String("Pomodoro set to ") + pomodoroMinutesLabel(minutes) +
+                       (autoStart ? " and started." : ".");
+        }
+    }
+
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, resultMsg, false);
+    }
+
+    Serial.printf("AI request: open Pomodoro minutes=%d autoStart=%d\n", minutes, autoStart);
+}
+
+static void processMusicControl(int callId) {
+    MusicAction action = gPendingAiMusicAction;
+    String resultMsg;
+    bool isError = false;
+
+    switch (action) {
+        case MusicAction::PLAY_PAUSE: {
+            MusicPlaybackState mstate = gMusicManager.state();
+            if (mstate == MusicPlaybackState::STOPPED || mstate == MusicPlaybackState::ERROR) {
+                if (gMusicManager.trackCount() == 0) {
+                    gMusicManager.scan();
+                }
+                if (gMusicManager.trackCount() == 0) {
+                    resultMsg = "No music files found on SD card.";
+                    isError = true;
+                    break;
+                }
+                String title = gMusicManager.trackName(0);
+                gMusicManager.play(0);
+                resultMsg = "Playing: " + title;
+
+                if (AppState::instance().getState() == AppStateEnum::AI) {
+                    gXiaoZhiClient.pauseForForegroundTool();
+                    gMusicReturnTo = AppStateEnum::AI;
+                    AppState::instance().setState(AppStateEnum::MUSIC);
+                }
+            } else if (mstate == MusicPlaybackState::PLAYING) {
+                gMusicManager.togglePause();
+                resultMsg = "Music paused.";
+            } else if (mstate == MusicPlaybackState::PAUSED) {
+                gMusicManager.togglePause();
+                resultMsg = "Music resumed.";
+            }
+            gMusicUI.markDirty();
+            break;
+        }
+        case MusicAction::STOP:
+            gMusicManager.stop();
+            gMusicUI.markDirty();
+            resultMsg = "Music stopped.";
+            break;
+        case MusicAction::NEXT:
+            if (gMusicManager.trackCount() == 0) {
+                gMusicManager.scan();
+            }
+            if (gMusicManager.trackCount() == 0) {
+                resultMsg = "No music files found on SD card.";
+                isError = true;
+            } else {
+                int nextIdx = gMusicManager.currentIndex() + 1;
+                if (nextIdx >= gMusicManager.trackCount()) nextIdx = 0;
+                String title = gMusicManager.trackName(nextIdx);
+                gMusicManager.next();
+                gMusicUI.markDirty();
+                resultMsg = "Playing: " + title;
+            }
+            break;
+        default:
+            resultMsg = "Unknown music action.";
+            isError = true;
+            break;
+    }
+
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, resultMsg, isError);
+    }
+}
+
+static FaceEmotion petReactionToEmotion(PetReaction reaction) {
+    switch (reaction) {
+        case PetReaction::HAPPY: return FaceEmotion::HAPPY;
+        case PetReaction::SHY: return FaceEmotion::SHY;
+        case PetReaction::CURIOUS: return FaceEmotion::CURIOUS;
+        case PetReaction::SLEEPY: return FaceEmotion::SLEEPY;
+        case PetReaction::SURPRISED: return FaceEmotion::SURPRISED;
+        case PetReaction::SICK: return FaceEmotion::SICK;
+        default: return FaceEmotion::HAPPY;
+    }
+}
+
+static const char* petReactionName(PetReaction reaction) {
+    switch (reaction) {
+        case PetReaction::HAPPY: return "Happy";
+        case PetReaction::SHY: return "Shy";
+        case PetReaction::CURIOUS: return "Curious";
+        case PetReaction::SLEEPY: return "Sleepy";
+        case PetReaction::SURPRISED: return "Surprised";
+        case PetReaction::SICK: return "Sick";
+        default: return "Happy";
+    }
+}
+
+static void processPetReact(int callId) {
+    PetReaction reaction = gPendingAiPetReaction;
+    if (reaction == PetReaction::NONE) {
+        reaction = PetReaction::HAPPY;
+    }
+
+    FaceEmotion emotion = petReactionToEmotion(reaction);
+    gPetReactPrevEmotion = AppState::instance().getEmotion();
+    gPetReactEmotion = emotion;
+    gPetReactActive = true;
+    gPetReactUntil = millis() + PET_REACT_DURATION_MS;
+    AppState::instance().setEmotion(emotion);
+
+    const char* name = petReactionName(reaction);
+    gFaceUI.setStatusText(name, UiTheme::CYAN, PET_REACT_DURATION_MS);
+
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId,
+            String("CoreS3 reacts: ") + name + "!", false);
+    }
+
+    Serial.printf("AI pet react: %s\n", name);
+}
+
+static void processPendingAiTool() {
+    PendingAiTool tool = gPendingAiTool;
+    if (tool == PendingAiTool::NONE) return;
+    gPendingAiTool = PendingAiTool::NONE;
+
+    int callId = gPendingAiCallId;
+    gPendingAiCallId = -1;
+
+    switch (tool) {
+        case PendingAiTool::CAMERA_OPEN:
+            processCameraOpen(callId);
+            break;
+        case PendingAiTool::CAMERA_CLOSE:
+            processCameraClose(callId);
+            break;
+        case PendingAiTool::CAMERA_CAPTURE_PHOTO:
+            processCameraCapturePhoto(callId);
+            break;
+        case PendingAiTool::VISION_DESCRIBE:
+            processVisionDescribe(callId);
+            break;
+        case PendingAiTool::POMODORO_OPEN:
+            processPomodoroOpen(callId);
+            break;
+        case PendingAiTool::MUSIC_CONTROL:
+            processMusicControl(callId);
+            break;
+        case PendingAiTool::PET_REACT:
+            processPetReact(callId);
+            break;
+        default:
+            break;
     }
 }
 
@@ -618,19 +995,6 @@ static void closeAiVisionPreview() {
         setAiVisionStatus(AiVisionStatus::IDLE, "Vision closed", "");
         AppState::instance().setState(AppStateEnum::AI);
     }
-}
-
-static void processPomodoroOpenRequest() {
-    if (!gPomodoroOpenPending) return;
-    gPomodoroOpenPending = false;
-
-    if (AppState::instance().getState() == AppStateEnum::AI_VISION) {
-        gCameraManager.stopCapture();
-        gCameraDebugUI.setCameraReady(false);
-        setAiVisionStatus(AiVisionStatus::IDLE, "Vision closed", "");
-    }
-    AppState::instance().setState(AppStateEnum::POMODORO);
-    Serial.println("AI request: open Pomodoro");
 }
 
 static String describeAiVisionScene(JsonObjectConst arguments, bool& ok) {
@@ -679,26 +1043,75 @@ static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst argumen
     Serial.printf("AI MCP tool (async): %s callId=%d\n", toolName.c_str(), callId);
 
     if (toolName == "self.camera.open") {
-        gAiVisionOpenPending = true;
-        gAiVisionMcpCallId = callId;
+        gPendingAiTool = PendingAiTool::CAMERA_OPEN;
+        gPendingAiCallId = callId;
         return;
     }
 
     if (toolName == "self.camera.close") {
-        closeAiVisionPreview();
-        gXiaoZhiClient.queueMcpToolTextResult(callId, "Camera is closed.", false);
+        gPendingAiTool = PendingAiTool::CAMERA_CLOSE;
+        gPendingAiCallId = callId;
+        return;
+    }
+
+    if (toolName == "self.camera.capture_photo") {
+        gPendingAiTool = PendingAiTool::CAMERA_CAPTURE_PHOTO;
+        gPendingAiCallId = callId;
         return;
     }
 
     if (toolName == "self.vision.describe_scene") {
-        gAiVisionDescribePending = true;
-        gAiVisionMcpCallId = callId;
+        gPendingAiTool = PendingAiTool::VISION_DESCRIBE;
+        gPendingAiCallId = callId;
         return;
     }
 
     if (toolName == "self.pomodoro.open") {
-        gPomodoroOpenPending = true;
-        gXiaoZhiClient.queueMcpToolTextResult(callId, "Pomodoro page opened.", false);
+        int minutes = 0;
+        bool autoStart = false;
+        if (!arguments.isNull()) {
+            if (!arguments["minutes"].isNull()) {
+                minutes = arguments["minutes"].as<int>();
+            }
+            if (!arguments["auto_start"].isNull()) {
+                autoStart = arguments["auto_start"].as<bool>();
+            }
+        }
+        gPendingAiTool = PendingAiTool::POMODORO_OPEN;
+        gPendingAiCallId = callId;
+        gPendingAiIntParam = minutes;
+        gPendingAiBoolParam = autoStart;
+        return;
+    }
+
+    if (toolName == "self.music.control") {
+        MusicAction action = MusicAction::NONE;
+        if (!arguments.isNull()) {
+            String actionStr = arguments["action"] | "";
+            if (actionStr == "play_pause") action = MusicAction::PLAY_PAUSE;
+            else if (actionStr == "stop") action = MusicAction::STOP;
+            else if (actionStr == "next") action = MusicAction::NEXT;
+        }
+        gPendingAiTool = PendingAiTool::MUSIC_CONTROL;
+        gPendingAiCallId = callId;
+        gPendingAiMusicAction = action;
+        return;
+    }
+
+    if (toolName == "self.pet.react") {
+        PetReaction reaction = PetReaction::NONE;
+        if (!arguments.isNull()) {
+            String reactionStr = arguments["reaction"] | "";
+            if (reactionStr == "happy") reaction = PetReaction::HAPPY;
+            else if (reactionStr == "shy") reaction = PetReaction::SHY;
+            else if (reactionStr == "curious") reaction = PetReaction::CURIOUS;
+            else if (reactionStr == "sleepy") reaction = PetReaction::SLEEPY;
+            else if (reactionStr == "surprised") reaction = PetReaction::SURPRISED;
+            else if (reactionStr == "sick") reaction = PetReaction::SICK;
+        }
+        gPendingAiTool = PendingAiTool::PET_REACT;
+        gPendingAiCallId = callId;
+        gPendingAiPetReaction = reaction;
         return;
     }
 
@@ -778,8 +1191,8 @@ static void gestureEventHandler(const GestureEvent& event) {
                     switch (gMenuUI.appAt(event.endX, event.endY)) {
                         case 0: appState.setState(AppStateEnum::WIFI_INFO); break;
                         case 1: appState.setState(AppStateEnum::CAMERA_DEBUG); break;
-                        case 2: appState.setState(AppStateEnum::POMODORO); break;
-                        case 3: appState.setState(AppStateEnum::MUSIC); break;
+                        case 2: gPomodoroReturnTo = AppStateEnum::MENU; appState.setState(AppStateEnum::POMODORO); break;
+                        case 3: gMusicReturnTo = AppStateEnum::MENU; appState.setState(AppStateEnum::MUSIC); break;
                         case 4: appState.setState(AppStateEnum::SYSTEM_INFO); break;
                     }
                     break;
@@ -859,7 +1272,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             PomoHitZone hit = gPomodoroUI.hitTest(event.endX, event.endY);
             if (event.type == GestureType::SINGLE_TAP) {
                 if (hit == PomoHitZone::POMO_HIT_BACK) {
-                    appState.setState(AppStateEnum::MENU);
+                    appState.setState(gPomodoroReturnTo);
                     break;
                 }
                 if (hit == PomoHitZone::POMO_HIT_START) {
@@ -876,7 +1289,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             }
             switch (event.type) {
                 case GestureType::LEFT_SWIPE:
-                    appState.setState(AppStateEnum::MENU);
+                    appState.setState(gPomodoroReturnTo);
                     break;
                 default:
                     break;
@@ -888,7 +1301,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             MusicHitZone hit = gMusicUI.hitTest(event.endX, event.endY);
             if (event.type == GestureType::SINGLE_TAP) {
                 if (hit == MusicHitZone::MUSIC_HIT_BACK) {
-                    appState.setState(AppStateEnum::MENU);
+                    appState.setState(gMusicReturnTo);
                     break;
                 }
                 if (hit == MusicHitZone::MUSIC_HIT_PLAY) {
@@ -909,7 +1322,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             }
             switch (event.type) {
                 case GestureType::LEFT_SWIPE:
-                    appState.setState(AppStateEnum::MENU);
+                    appState.setState(gMusicReturnTo);
                     break;
                 default:
                     break;
@@ -974,10 +1387,15 @@ static void stateChangeHandler(AppStateEnum state) {
             gMusicUI.hide();
             stopMusicForExclusiveAudio();
             gFaceUI.clearStatusText();
+            gPetReactActive = false;
             if (gWifiManager.isConnected()) {
                 AppState::instance().setEmotion(FaceEmotion::LISTENING);
                 if (gXiaoZhiClient.isActivated()) {
-                    gNeedOpenAudioChannel = true;
+                    if (gXiaoZhiClient.isAudioChannelOpen()) {
+                        gXiaoZhiClient.resumeFromForegroundTool();
+                    } else {
+                        gNeedOpenAudioChannel = true;
+                    }
                 } else if (!gXiaoZhiClient.hasActivationCode() && !gActivationCodeRequested) {
                     gNeedActivationRequest = true;
                     gActivationCodeRequested = true;
@@ -1330,8 +1748,7 @@ void loop() {
     unsigned long now = millis();
     processPomodoroCompletion(now);
     updatePomodoroMelody(now);
-    processAiVisionVoiceFallback();
-    processPomodoroOpenRequest();
+    processPendingAiTool();
 
     if (SERIAL_DIAGNOSTIC_HEARTBEAT && millis() - lastHeartbeat >= SERIAL_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = millis();
@@ -1370,6 +1787,16 @@ void loop() {
             gPomodoroFaceEmotionActive = false;
             if (AppState::instance().getEmotion() == gPomodoroFaceEmotion) {
                 AppState::instance().setEmotion(FaceEmotion::NORMAL);
+            }
+        }
+    }
+
+    if (gPetReactActive && now >= gPetReactUntil) {
+        gPetReactActive = false;
+        AppStateEnum st = AppState::instance().getState();
+        if (st == AppStateEnum::FACE || st == AppStateEnum::AI) {
+            if (AppState::instance().getEmotion() == gPetReactEmotion) {
+                AppState::instance().setEmotion(gPetReactPrevEmotion);
             }
         }
     }

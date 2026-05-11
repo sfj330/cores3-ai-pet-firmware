@@ -39,6 +39,9 @@ public:
     bool stopListening();
     bool openAudioChannel();
     void closeAudioChannel();
+    void pauseForForegroundTool();
+    void resumeFromForegroundTool();
+    bool isAudioChannelOpen() const;
 
     void setStateCallback(std::function<void(VoiceState)> cb);
     void setMcpToolCallback(McpToolCallback cb);

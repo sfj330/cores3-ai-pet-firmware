@@ -258,6 +258,12 @@ String XiaoZhiClient::getHelloMessage() {
 }
 
 bool XiaoZhiClient::openAudioChannel() {
+    if (audioChannelOpen_ && wsConnected_ && mcpReady_) {
+        Serial.println("XiaoZhi: audio channel already open, resuming listening");
+        startListening();
+        return true;
+    }
+
     if (openingAudioChannel_) {
         return false;
     }
@@ -394,6 +400,34 @@ void XiaoZhiClient::closeAudioChannel() {
     serverHelloReceived_ = false;
     listenStarted_ = false;
     mcpReady_ = false;
+}
+
+void XiaoZhiClient::pauseForForegroundTool() {
+    audioCaptureRunning_ = false;
+    listenRequested_ = false;
+    listenStarted_ = false;
+    pendingStartListening_ = false;
+    pendingStopListening_ = false;
+    stopMic();
+    stopSpeaker();
+    if (opusTxQueue_) {
+        xQueueReset(opusTxQueue_);
+    }
+    setState(VoiceState::IDLE);
+    Serial.println("XiaoZhi: paused for foreground tool");
+}
+
+void XiaoZhiClient::resumeFromForegroundTool() {
+    if (!audioChannelOpen_ || !wsConnected_) {
+        Serial.println("XiaoZhi: cannot resume, channel not open");
+        return;
+    }
+    startListening();
+    Serial.println("XiaoZhi: resumed from foreground tool");
+}
+
+bool XiaoZhiClient::isAudioChannelOpen() const {
+    return audioChannelOpen_ && wsConnected_;
 }
 
 void XiaoZhiClient::wsEvent(WStype_t type, uint8_t* payload, size_t length) {
@@ -614,35 +648,94 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
     JsonDocument result;
     JsonArray tools = result["tools"].to<JsonArray>();
 
-    JsonObject openTool = tools.add<JsonObject>();
-    openTool["name"] = "self.camera.open";
-    openTool["description"] = "打开 CoreS3 摄像头预览。当用户说打开摄像头、让我看看、你能看见吗时调用。";
-    JsonObject openSchema = openTool["inputSchema"].to<JsonObject>();
-    openSchema["type"] = "object";
-    openSchema["properties"].to<JsonObject>();
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.camera.open";
+        t["description"] = "打开 CoreS3 摄像头预览。当用户说打开摄像头、让我看看、你能看见吗时调用。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        s["properties"].to<JsonObject>();
+    }
 
-    JsonObject closeTool = tools.add<JsonObject>();
-    closeTool["name"] = "self.camera.close";
-    closeTool["description"] = "关闭 CoreS3 摄像头预览，返回小智 AI 页面。";
-    JsonObject closeSchema = closeTool["inputSchema"].to<JsonObject>();
-    closeSchema["type"] = "object";
-    closeSchema["properties"].to<JsonObject>();
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.camera.close";
+        t["description"] = "关闭 CoreS3 摄像头预览，返回小智 AI 页面。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        s["properties"].to<JsonObject>();
+    }
 
-    JsonObject describeTool = tools.add<JsonObject>();
-    describeTool["name"] = "self.vision.describe_scene";
-    describeTool["description"] = "用 CoreS3 摄像头拍照并识别画面。当用户问这是什么、你能看到什么、帮我识别时调用。";
-    JsonObject describeSchema = describeTool["inputSchema"].to<JsonObject>();
-    describeSchema["type"] = "object";
-    JsonObject props = describeSchema["properties"].to<JsonObject>();
-    JsonObject prompt = props["prompt"].to<JsonObject>();
-    prompt["type"] = "string";
-    JsonObject pomoTool = tools.add<JsonObject>();
-    pomoTool["name"] = "self.pomodoro.open";
-    pomoTool["description"] = "Open the CoreS3 Pomodoro timer page. Use when the user asks to open Pomodoro, timer, or focus timer mode.";
-    JsonObject pomoSchema = pomoTool["inputSchema"].to<JsonObject>();
-    pomoSchema["type"] = "object";
-    pomoSchema["properties"].to<JsonObject>();
-    prompt["description"] = "用户关于画面的可选问题。";
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.camera.capture_photo";
+        t["description"] = "用 CoreS3 摄像头拍一张照片并保存到 SD 卡。当用户说拍张照、保存一张照片、拍照时调用。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        s["properties"].to<JsonObject>();
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.vision.describe_scene";
+        t["description"] = "用 CoreS3 摄像头拍照并识别画面。当用户问这是什么、你能看到什么、帮我识别时调用。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+        JsonObject prompt = p["prompt"].to<JsonObject>();
+        prompt["type"] = "string";
+        prompt["description"] = "用户关于画面的可选问题。";
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.pomodoro.open";
+        t["description"] = "打开 CoreS3 番茄钟计时器。当用户说打开番茄钟、开始计时、专注模式时调用。支持指定分钟数和是否自动开始。只支持5、15、25、50分钟四个预设。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+        JsonObject minutes = p["minutes"].to<JsonObject>();
+        minutes["type"] = "integer";
+        minutes["description"] = "计时时长（分钟），只支持 5、15、25、50。";
+        JsonObject autoStart = p["auto_start"].to<JsonObject>();
+        autoStart["type"] = "boolean";
+        autoStart["description"] = "是否自动开始计时。默认 false。";
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.music.control";
+        t["description"] = "控制 CoreS3 音乐播放。当用户说播放音乐、暂停音乐、停止音乐、下一首时调用。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+        JsonObject action = p["action"].to<JsonObject>();
+        action["type"] = "string";
+        action["description"] = "操作类型：play_pause（播放/暂停）、stop（停止）、next（下一首）";
+        JsonArray actionEnum = action["enum"].to<JsonArray>();
+        actionEnum.add("play_pause");
+        actionEnum.add("stop");
+        actionEnum.add("next");
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.pet.react";
+        t["description"] = "让 CoreS3 桌宠做出表情反应。当用户说开心一下、害羞一下、卖个萌、装困、惊讶一下时调用。只改变表情和短状态文本，不影响 AI 状态。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+        JsonObject reaction = p["reaction"].to<JsonObject>();
+        reaction["type"] = "string";
+        reaction["description"] = "表情类型：happy、shy、curious、sleepy、surprised、sick";
+        JsonArray reactionEnum = reaction["enum"].to<JsonArray>();
+        reactionEnum.add("happy");
+        reactionEnum.add("shy");
+        reactionEnum.add("curious");
+        reactionEnum.add("sleepy");
+        reactionEnum.add("surprised");
+        reactionEnum.add("sick");
+    }
 
     String resultJson;
     serializeJson(result, resultJson);
