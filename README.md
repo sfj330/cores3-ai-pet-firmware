@@ -10,8 +10,8 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - Menu UI: six app icons for Wi-Fi, Camera, Timer, Music, System, and Servo Test pages.
 - Camera Debug: 320 x 240 preview, FPS/status overlay, Back button, JPEG capture to SD, and a real-detector face-centering hook before capture.
 - Pomodoro: four presets selected by IMU orientation, screen rotation, timer controls, completion melody, and temporary completion emotion on the face page.
-- Music: scans `/music` on the SD card and plays up to 16 PCM WAV files.
-- Servo Test: PCA9685 control through CoreS3 PortA, with IMU X/Y tilt mapped to horizontal and vertical servos in a 10-170 degree test range.
+- Music: scans `/music` on the SD card and plays up to 16 MP3 or PCM WAV files.
+- Servo Test: PCA9685 control through CoreS3 PortA, with IMU X/Y tilt mapped to horizontal and vertical servos in a 10-170 degree test range. The calibrated centers are pan 90 degrees and tilt 170 degrees.
 - Servo interaction: Face taps, expression changes, XiaoZhi pet reactions, and XiaoZhi servo commands can move/center/release the two-axis head with shared rate limiting.
 - XiaoZhi AI: OTA activation/config request, TLS WebSocket, Opus microphone upload, Opus TTS playback, and MCP handshake/tool handling.
 - AI Vision: camera preview and image-description requests through the vision endpoint provided by the XiaoZhi service.
@@ -21,7 +21,7 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 
 - M5Stack CoreS3, ESP32-S3
 - USB cable for build/upload/serial monitor
-- MicroSD/TF card formatted as FAT/FAT32 for photos and WAV music
+- MicroSD/TF card formatted as FAT/FAT32 for photos and MP3/WAV music
 - Optional base hardware for battery, PCA9685, and two-axis servos
 
 Servo Test wiring used by this firmware:
@@ -32,6 +32,7 @@ PCA9685 address: 0x40
 Horizontal servo: PCA9685 channel 0
 Vertical servo:   PCA9685 channel 1
 Servo power: external servo power module, with common ground to CoreS3/PCA9685
+Calibrated center: horizontal 90 degrees, vertical 170 degrees
 ```
 
 CoreS3 SD SPI pins used by this firmware:
@@ -64,7 +65,7 @@ src/
 ├── main.cpp
 ├── app/        # State machine, gestures, event bus
 ├── ai/         # XiaoZhi activation, WebSocket, Opus audio, MCP
-├── audio/      # SD WAV music player
+├── audio/      # SD MP3/WAV music player
 ├── config/     # Firmware constants and Wi-Fi secret template
 ├── network/    # Wi-Fi manager and AI vision HTTP client
 ├── power/      # Battery/sleep placeholder logic
@@ -143,7 +144,7 @@ pio device monitor -p COM5 -b 115200
 - Camera Debug: SHOT saves `/photos/IMG_####.jpg`; if a real face detector backend is available, the firmware briefly tries to center the face with the servos before capture; Back or left swipe returns to Menu.
 - AI Vision: Back or left swipe closes preview and returns to XiaoZhi AI.
 - Pomodoro: rotate the device to select a preset; Start/Pause and Reset control the timer; Back returns to Menu.
-- Music: Play/Pause, Stop, and Next operate on WAV files found in `/music`.
+- Music: Play/Pause, Stop, and Next operate on MP3/WAV files found in `/music`.
 - Servo Test: entering the page centers both servos; tilt CoreS3 left/right for the horizontal servo and forward/back for the vertical servo; tap to re-center; long press releases PWM; Back or left swipe returns to Menu.
 
 ## SD Card Content
@@ -152,10 +153,11 @@ The firmware creates and uses:
 
 ```text
 /photos/IMG_####.jpg
+/music/*.mp3
 /music/*.wav
 ```
 
-Music playback currently supports PCM WAV files with 8-bit or 16-bit samples and one or two channels. The first 16 WAV files are scanned and sorted by filename.
+Music playback currently supports MP3 files plus PCM WAV files with 8-bit or 16-bit samples and one or two channels. The first 16 audio files are scanned and sorted by filename.
 
 ## XiaoZhi AI
 
@@ -197,7 +199,7 @@ AI Vision depends on the vision endpoint and token delivered by the XiaoZhi serv
 
 ## Known Limitations
 
-- Real face detection is disabled. ESP-DL/ESP-WHO integration still needs a verified ESP-IDF or Arduino-as-IDF-component path.
+- Real face detection is disabled. The current entry point is `src/vision/face_detector.*`, where `FaceDetector::backendAvailable()` returns false and `detect()` returns no boxes. ESP-DL/ESP-WHO integration still needs a verified ESP-IDF or Arduino-as-IDF-component path.
 - Photo face tracking only becomes closed-loop when `FaceDetector::detect()` returns real face boxes; the current Arduino build reports face tracking unavailable and still saves photos normally.
 - AI Vision requires a XiaoZhi-provided vision endpoint.
 - CoreS3 built-in microphone and speaker are half-duplex; full-duplex interruption and echo cancellation are not implemented.

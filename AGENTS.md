@@ -20,8 +20,8 @@ Implemented:
 - Camera preview and JPEG capture to SD.
 - AI Vision preview and JPEG description request through a XiaoZhi-provided vision endpoint.
 - IMU orientation based Pomodoro timer with four presets and screen rotation.
-- SD WAV music player.
-- PCA9685 servo communication test through CoreS3 PortA, mapping IMU X/Y tilt to horizontal channel 0 and vertical channel 1 in a 10-170 degree test range.
+- SD MP3/WAV music player.
+- PCA9685 servo communication test through CoreS3 PortA, mapping IMU X/Y tilt to horizontal channel 0 and vertical channel 1 in a 10-170 degree test range. The calibrated centers are pan 90 degrees and tilt 170 degrees.
 - Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, and XiaoZhi `self.servo.control` commands.
 - Photo face-centering framework that can drive the servos from real `FaceResult` boxes when a real detector backend is added.
 - XiaoZhi OTA activation/config, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools.
@@ -42,7 +42,7 @@ Not implemented or intentionally disabled:
 - `CAMERA_DEBUG` - camera preview and SD photo capture.
 - `AI_VISION` - camera preview for XiaoZhi vision requests.
 - `POMODORO` - IMU selected timer.
-- `MUSIC` - SD WAV player.
+- `MUSIC` - SD MP3/WAV player.
 - `SYSTEM_INFO` - heap, PSRAM, power, and vision status page.
 - `SERVO_TEST` - PCA9685 communication and IMU tilt servo test page.
 - `AI` - XiaoZhi voice interaction page.
@@ -103,7 +103,7 @@ src/
 | AI | Process XiaoZhi WebSocket, activation, audio channel requests | 50 Hz tick |
 | Power | Battery/sleep status update | 1 Hz |
 | Network | Wi-Fi reconnect and menu status update | 5 s interval |
-| Music | Background WAV streaming task inside `MusicManager` | event-driven |
+| Music | Background MP3/WAV streaming task inside `MusicManager` | event-driven |
 | Servo Test | IMU tilt sampling and PCA9685 writes from the main loop while `SERVO_TEST` is active | 25 Hz max |
 
 ## Gesture Routing
@@ -141,7 +141,7 @@ src/
 
 Do not fake real face detection.
 
-The current firmware uses Arduino framework on PlatformIO. ESP-DL/ESP-WHO face detection models and components require an ESP-IDF CMake integration path, so `FaceDetector` intentionally reports unavailable backend and returns `detected=false`.
+The current firmware uses Arduino framework on PlatformIO. ESP-DL/ESP-WHO face detection models and components require an ESP-IDF CMake integration path, so `FaceDetector` in `src/vision/face_detector.*` intentionally reports unavailable backend and returns `detected=false`.
 
 Likely future paths:
 
