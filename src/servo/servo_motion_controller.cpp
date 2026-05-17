@@ -40,6 +40,10 @@ bool ServoMotionController::isReleased() const {
     return servo_ == nullptr || servo_->isReleased();
 }
 
+bool ServoMotionController::isDanceActive() const {
+    return sequence_ == Sequence::DANCE;
+}
+
 const String& ServoMotionController::statusText() const {
     return status_;
 }
@@ -116,6 +120,9 @@ bool ServoMotionController::command(ServoMotionAction action) {
             return true;
         case ServoMotionAction::SHAKE:
             startSequence(Sequence::SHAKE, "Shake");
+            return true;
+        case ServoMotionAction::DANCE:
+            startSequence(Sequence::DANCE, "Dance", SERVO_DANCE_MOTION_SPEED_DPS);
             return true;
         case ServoMotionAction::RELEASE:
             return release();
@@ -199,13 +206,13 @@ void ServoMotionController::setActualTarget(float panDeg, float tiltDeg,
     }
 }
 
-void ServoMotionController::startSequence(Sequence sequence, const char* status) {
+void ServoMotionController::startSequence(Sequence sequence, const char* status, float speedDps) {
     syncFromServo();
     sequence_ = sequence;
     sequenceStep_ = 0;
     nextSequenceStepAt_ = 0;
     active_ = true;
-    speedDps_ = SERVO_FACE_MOTION_SPEED_DPS;
+    speedDps_ = speedDps > 1.0f ? speedDps : SERVO_FACE_MOTION_SPEED_DPS;
     if (status != nullptr) {
         status_ = status;
     }
@@ -239,6 +246,57 @@ void ServoMotionController::advanceSequence(unsigned long now) {
             } else if (sequenceStep_ == 2) {
                 lookOffset(-SERVO_FACE_PAN_OFFSET_DEG * 0.6f, 0.0f, SERVO_FACE_MOTION_SPEED_DPS, "Shake left");
                 nextSequenceStepAt_ = now + 360;
+            } else {
+                center(SERVO_FACE_MOTION_SPEED_DPS);
+                sequence_ = Sequence::NONE;
+            }
+            sequenceStep_++;
+            break;
+        case Sequence::DANCE:
+            if (sequenceStep_ == 0) {
+                lookOffset(-SERVO_DANCE_PAN_OFFSET_DEG, -6.0f, SERVO_DANCE_MOTION_SPEED_DPS, "Dance left");
+                nextSequenceStepAt_ = now + 520;
+            } else if (sequenceStep_ == 1) {
+                lookOffset(SERVO_DANCE_PAN_OFFSET_DEG, SERVO_DANCE_TILT_DOWN_DEG * 0.5f,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance right");
+                nextSequenceStepAt_ = now + 560;
+            } else if (sequenceStep_ == 2) {
+                lookOffset(-SERVO_DANCE_PAN_OFFSET_DEG * 0.75f, SERVO_DANCE_TILT_DOWN_DEG,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance dip");
+                nextSequenceStepAt_ = now + 560;
+            } else if (sequenceStep_ == 3) {
+                lookOffset(0.0f, -SERVO_DANCE_TILT_UP_DEG, SERVO_DANCE_MOTION_SPEED_DPS, "Dance up");
+                nextSequenceStepAt_ = now + 460;
+            } else if (sequenceStep_ == 4) {
+                lookOffset(SERVO_DANCE_PAN_OFFSET_DEG, -4.0f, SERVO_DANCE_MOTION_SPEED_DPS, "Dance swing");
+                nextSequenceStepAt_ = now + 520;
+            } else if (sequenceStep_ == 5) {
+                lookOffset(-SERVO_DANCE_PAN_OFFSET_DEG, SERVO_DANCE_TILT_DOWN_DEG * 0.5f,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance swing");
+                nextSequenceStepAt_ = now + 560;
+            } else if (sequenceStep_ == 6) {
+                lookOffset(SERVO_DANCE_PAN_OFFSET_DEG * 0.6f, -SERVO_DANCE_TILT_UP_DEG,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance nod");
+                nextSequenceStepAt_ = now + 460;
+            } else if (sequenceStep_ == 7) {
+                lookOffset(0.0f, SERVO_DANCE_TILT_DOWN_DEG, SERVO_DANCE_MOTION_SPEED_DPS, "Dance nod");
+                nextSequenceStepAt_ = now + 520;
+            } else if (sequenceStep_ == 8) {
+                lookOffset(-SERVO_DANCE_PAN_OFFSET_DEG * 0.8f, 0.0f,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance left");
+                nextSequenceStepAt_ = now + 500;
+            } else if (sequenceStep_ == 9) {
+                lookOffset(SERVO_DANCE_PAN_OFFSET_DEG * 0.8f, 0.0f,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance right");
+                nextSequenceStepAt_ = now + 500;
+            } else if (sequenceStep_ == 10) {
+                lookOffset(-SERVO_DANCE_PAN_OFFSET_DEG * 0.45f, -SERVO_DANCE_TILT_UP_DEG * 0.5f,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance finish");
+                nextSequenceStepAt_ = now + 420;
+            } else if (sequenceStep_ == 11) {
+                lookOffset(SERVO_DANCE_PAN_OFFSET_DEG * 0.45f, SERVO_DANCE_TILT_DOWN_DEG * 0.35f,
+                           SERVO_DANCE_MOTION_SPEED_DPS, "Dance finish");
+                nextSequenceStepAt_ = now + 420;
             } else {
                 center(SERVO_FACE_MOTION_SPEED_DPS);
                 sequence_ = Sequence::NONE;

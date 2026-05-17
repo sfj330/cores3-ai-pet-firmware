@@ -10,6 +10,8 @@ static const char* gestureName(GestureType type) {
         case GestureType::DOUBLE_TAP: return "DOUBLE_TAP";
         case GestureType::RIGHT_SWIPE: return "RIGHT_SWIPE";
         case GestureType::LEFT_SWIPE: return "LEFT_SWIPE";
+        case GestureType::UP_SWIPE: return "UP_SWIPE";
+        case GestureType::DOWN_SWIPE: return "DOWN_SWIPE";
         case GestureType::LONG_PRESS: return "LONG_PRESS";
         default: return "NONE";
     }
@@ -86,6 +88,14 @@ void GestureManager::detectGesture() {
 
     if (absDx >= RELAXED_SWIPE_THRESHOLD_PX && absDx >= absDy) {
         event.type = dx > 0 ? GestureType::RIGHT_SWIPE : GestureType::LEFT_SWIPE;
+        pendingSingleTap_ = false;
+        emitGesture(event, callback_);
+        return;
+    }
+
+    int dy = lastPoint_.y - startPoint_.y;
+    if (absDy >= RELAXED_SWIPE_THRESHOLD_PX && absDy > absDx) {
+        event.type = dy > 0 ? GestureType::DOWN_SWIPE : GestureType::UP_SWIPE;
         pendingSingleTap_ = false;
         emitGesture(event, callback_);
         return;

@@ -10,9 +10,10 @@
 - 功能菜单：六个入口，分别是 Wi-Fi、Camera、Timer、Music、System、Servo。
 - Camera Debug：320 x 240 预览、FPS/状态叠层、Back、SHOT，支持拍照保存到 SD；如果未来接入真实人脸检测后端，拍照前可尝试用舵机居中人脸。
 - 番茄钟：IMU 四方向选择预设，屏幕跟随旋转，支持开始/暂停/重置，结束后播放提示音并回到表情页显示临时表情。
-- 音乐播放：扫描 SD 卡 `/music` 目录，最多播放 16 个 MP3 或 PCM WAV 文件。
-- Servo Test：通过 CoreS3 PortA 控制 PCA9685，IMU X/Y 倾斜映射到水平 CH0 和竖直 CH1，测试范围为 10-170 度；当前校准中位为水平 90 度、竖直 170 度。
-- 舵机互动：表情点击、小智表情反应和小智 `self.servo.control` 命令可通过共享限速层控制二轴头部动作。
+- 音乐播放：扫描 SD 卡 `/music` 目录，最多播放 16 个 MP3 或 PCM WAV 文件。MP3 会按解码器采样率混成 CoreS3 内置扬声器的单声道 PCM，并使用保守默认音量。
+- Servo Test：通过 CoreS3 PortA 控制 PCA9685，IMU X/Y 倾斜映射到水平 CH0 和竖直 CH1，测试范围为 10-170 度；Servo Test 测试中位为水平 90 度、竖直 90 度。
+- 舵机互动：表情点击、小智表情反应、小智 `self.servo.control` 命令和跳舞彩蛋可通过共享限速层控制二轴头部动作；表情/小智姿态仍保留水平 90 度、竖直 140 度的机械中位。
+- 好感界面：表情页下滑打开 Bond 页面，显示好感值、等级、心情和最近互动；本轮为内存态，重启后恢复默认值。
 - 小智 AI：已实现 OTA 激活/配置请求、TLS WebSocket、Opus 麦克风上传、Opus TTS 播放、MCP 握手和工具调用处理。
 - AI Vision：通过小智服务下发的 vision endpoint，将 CoreS3 拍到的 JPEG 发送给服务端进行画面描述。
 - 人脸检测：当前 Arduino/PlatformIO 版本有意关闭，不启用假检测或肤色检测。
@@ -24,7 +25,7 @@
 - FAT/FAT32 格式 MicroSD/TF 卡，用于保存照片和 MP3/WAV 音乐
 - 可选底座硬件：电池、PCA9685、二轴舵机
 
-本固件使用的 Servo Test 接线：
+本固件使用的舵机接线：
 
 ```text
 CoreS3 PortA -> PCA9685 I2C
@@ -32,7 +33,8 @@ PCA9685 地址：0x40
 水平舵机：PCA9685 CH0
 竖直舵机：PCA9685 CH1
 舵机电源：外部舵机电源模块，并与 CoreS3/PCA9685 共地
-校准中位：水平 90 度，竖直 170 度
+Servo Test 中位：水平 90 度，竖直 90 度
+表情/小智中位：水平 90 度，竖直 140 度
 ```
 
 本固件使用的 CoreS3 SD SPI 引脚：
@@ -63,7 +65,7 @@ CS   4
 ```text
 src/
 ├── main.cpp
-├── app/        # 状态机、手势、事件总线
+├── app/        # 状态机、手势、好感管理、事件总线
 ├── ai/         # 小智激活、WebSocket、Opus 音频、MCP
 ├── audio/      # SD MP3/WAV 音乐播放器
 ├── config/     # 固件参数和 Wi-Fi 密码模板
@@ -71,7 +73,7 @@ src/
 ├── power/      # 电池/休眠占位逻辑
 ├── servo/      # PCA9685 驱动、舵机动作层和安全限速
 ├── storage/    # SD 探测、照片路径、文件写入
-├── ui/         # 表情、菜单、相机、番茄钟、信息、音乐、舵机测试界面
+├── ui/         # 表情、菜单、相机、番茄钟、信息、音乐、舵机测试、好感界面
 └── vision/     # 相机管理、关闭的人脸检测接口、追踪器、IMU 方向、拍照人脸居中控制
 ```
 
@@ -133,14 +135,15 @@ pio device monitor -p COM5 -b 115200
 
 ## 操作方式
 
-- 表情页：右滑进入菜单；左滑或双击进入小智 AI；点击上/下/左/右切换表情、视线和舵机头部姿态；摇晃机身显示 `SICK`；长按进入休眠。
+- 表情页：右滑进入菜单；左滑或双击进入小智 AI；下滑进入 Bond 好感界面；点击上/下/左/右切换表情、视线和舵机头部姿态；摇晃机身显示 `SICK`；长按进入休眠。
 - AI 页：单击切换监听；右滑或长按返回表情页。
+- Bond 好感页：Back、上滑或左滑返回表情页。
 - 菜单页：点击图标进入 Wi-Fi、Camera、Timer、Music、System 或 Servo；Back 返回表情页。
 - Camera Debug：SHOT 保存 `/photos/IMG_####.jpg`；如果真实人脸检测后端可用，拍照前会短暂尝试居中人脸；Back 或左滑返回菜单。
 - AI Vision：Back 或左滑关闭预览并返回小智 AI。
 - 番茄钟：旋转设备选择预设；Start/Pause 和 Reset 控制计时；Back 返回菜单。
 - 音乐页：Play/Pause、Stop、Next 控制 `/music` 里的 MP3/WAV 文件。
-- Servo Test：进入后舵机回到中位；左右倾斜 CoreS3 控制水平舵机，前后倾斜控制竖直舵机；点击回中；长按释放 PWM。
+- Servo Test：进入后舵机回到 90/90 测试中位；左右倾斜 CoreS3 控制水平舵机，前后倾斜控制竖直舵机；点击回到 90/90；长按释放 PWM；Back 或左滑返回菜单并恢复表情/小智 90/140 中位。
 
 ## SD 卡内容
 
@@ -152,7 +155,7 @@ pio device monitor -p COM5 -b 115200
 /music/*.wav
 ```
 
-音乐播放当前支持 MP3 文件，以及 8-bit 或 16-bit、单声道或双声道的 PCM WAV 文件。扫描时最多读取前 16 个音频文件，并按文件名排序。
+音乐播放当前支持 MP3 文件，以及 8-bit 或 16-bit、单声道或双声道的 PCM WAV 文件。MP3 的单声道/双声道会先混成单声道，再送入内置扬声器队列。扫描时最多读取前 16 个音频文件，并按文件名排序。
 
 ## 小智 AI
 
@@ -190,7 +193,7 @@ self.servo.control
 
 AI Vision 依赖小智服务在 MCP 初始化中提供的 vision endpoint 和 token。它不是本地嵌入式人脸检测。
 
-`self.servo.control` 支持 `center`、`left`、`right`、`up`、`down`、`nod`、`shake`、`release`。这些动作只控制舵机姿态，不切换页面，也不重新打开小智音频连接。
+`self.servo.control` 支持 `center`、`left`、`right`、`up`、`down`、`nod`、`shake`、`dance`、`release`。这些动作只控制舵机姿态，不切换页面，也不重新打开小智音频连接。`dance` 会先启动舵机跳舞，再尝试配合 `/music` 中的 MP3/WAV 播放；音乐或 SD 异常不会取消舵机动作。
 
 ## 已知限制
 
@@ -201,6 +204,7 @@ AI Vision 依赖小智服务在 MCP 初始化中提供的 vision endpoint 和 to
 - 电池电压读取仍是占位实现，需要结合最终 PMU API/硬件路径验证。
 - SD 卡识别受卡格式、接触和供电影响。固件会按 25、10、4、1 MHz 逐级重试。
 - 舵机表情/小智控制是带限速的开环姿态控制，不是 PID 云台控制或自主底座运动。
+- 好感值本轮不持久化，重启后回到默认 35。
 
 ## 故障排查
 
@@ -211,3 +215,4 @@ AI Vision 依赖小智服务在 MCP 初始化中提供的 vision endpoint 和 to
 - 没有 AI 回复：确认 Wi-Fi 已连接，并检查 `WS connected`、`session_id`、`sent listen start`、`stt`、`tts` 日志。
 - AI Vision 提示 endpoint missing：当前小智会话没有下发 vision capability。
 - SD 未识别：格式化为 FAT/FAT32，重新插入，查看串口中的 `SD.begin failed`、`CARD_NONE`、`Root open failed` 或 `Probe write failed`。
+- MP3 无声或播放几秒后重启：先看串口里的曲目路径、MP3 采样率/声道和 speaker 队列失败日志。下次启动若显示 `BROWNOUT` 或 `POWERON`，优先判断为供电瞬断；若是 `WDT` 或 `PANIC`，再继续按软件崩溃定位。

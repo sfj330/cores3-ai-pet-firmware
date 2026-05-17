@@ -9,6 +9,7 @@
 #include "app/app_state.h"
 #include "app/gesture_manager.h"
 #include "app/event_bus.h"
+#include "app/affinity_manager.h"
 #include "ui/face_ui.h"
 #include "ui/menu_ui.h"
 #include "ui/camera_debug_ui.h"
@@ -16,6 +17,7 @@
 #include "ui/info_ui.h"
 #include "ui/music_ui.h"
 #include "ui/servo_test_ui.h"
+#include "ui/affinity_ui.h"
 #include "ui/ui_theme.h"
 #include "audio/music_manager.h"
 #include "servo/servo_controller.h"
@@ -39,6 +41,7 @@ PomodoroUI gPomodoroUI;
 InfoUI gInfoUI;
 MusicUI gMusicUI;
 ServoTestUI gServoTestUI;
+AffinityUI gAffinityUI;
 CameraManager gCameraManager;
 FaceDetector gFaceDetector;
 FaceTracker gFaceTracker;
@@ -52,6 +55,7 @@ MusicManager gMusicManager;
 ServoController gServoController;
 ServoMotionController gServoMotionController;
 FaceTrackingController gFaceTrackingController;
+AffinityManager gAffinityManager;
 
 static float gCurrentFps = 0.0f;
 static unsigned long gLastFpsCalc = 0;
@@ -122,6 +126,7 @@ enum class ServoAiAction : uint8_t {
     DOWN,
     NOD,
     SHAKE,
+    DANCE,
     RELEASE
 };
 
@@ -159,6 +164,17 @@ static FaceEmotion gPetReactEmotion = FaceEmotion::NORMAL;
 static FaceEmotion gPetReactPrevEmotion = FaceEmotion::NORMAL;
 static unsigned long gPetReactUntil = 0;
 static constexpr unsigned long PET_REACT_DURATION_MS = 4000;
+
+static bool gDanceActive = false;
+static bool gDanceStartedMusic = false;
+static FaceEmotion gDancePrevEmotion = FaceEmotion::NORMAL;
+
+static bool gAiListeningAffinityAwarded = false;
+static bool gAffinityWelcomeActive = false;
+static unsigned long gAffinityWelcomeUntil = 0;
+static unsigned long gNextCompanionMotionAt = 0;
+static unsigned long gNextSpeakingNodAt = 0;
+static bool gSpeakingNodDown = false;
 
 enum class AiVisionStatus {
     IDLE,
@@ -203,10 +219,15 @@ static void closeAiVisionPreview();
 static void setAiVisionStatus(AiVisionStatus status, const char* text, const char* result = nullptr);
 static void updateInfoUiData();
 static void updateMusicUiData();
+static void updateAffinityUiData();
 static void stopMusicForExclusiveAudio();
 static void resetServoTestControl();
 static void updateServoTestFromImu(unsigned long now);
 static void updateSharedServoMotion(unsigned long now);
+static void updateCompanionMotion(unsigned long now);
+static void updateDanceLifecycle(unsigned long now);
+static void addAffinity(int delta, const char* reason);
+static bool startDanceMusic(String& note);
 static void applyServoPoseForEmotion(FaceEmotion emotion);
 static void applyServoPoseForPetReaction(PetReaction reaction);
 static bool prepareFaceTrackingForPhoto(String& note);
@@ -256,6 +277,53 @@ static void updateMusicUiData() {
                       gMusicManager.state());
 }
 
+static void updateAffinityUiData() {
+    gAffinityUI.setState(gAffinityManager.value(),
+                         gAffinityManager.levelName(),
+                         gAffinityManager.moodName(),
+                         gAffinityManager.recent().c_str());
+}
+
+static void addAffinity(int delta, const char* reason) {
+    gAffinityManager.add(delta, reason);
+    gAffinityUI.markDirty();
+}
+
+static bool startDanceMusic(String& note) {
+    MusicPlaybackState mstate = gMusicManager.state();
+    if (mstate == MusicPlaybackState::PLAYING) {
+        note = "dance with current music";
+        gDanceStartedMusic = false;
+        return true;
+    }
+
+    if (gMusicManager.trackCount() == 0) {
+        gMusicManager.scan();
+    }
+    if (gMusicManager.trackCount() == 0) {
+        note = "dance without music";
+        gDanceStartedMusic = false;
+        return false;
+    }
+
+    int index = gMusicManager.currentIndex();
+    if (index < 0 || index >= gMusicManager.trackCount()) {
+        index = 0;
+    }
+    String title = gMusicManager.trackName(index);
+    bool ok = gMusicManager.play(index);
+    gMusicUI.markDirty();
+    if (ok) {
+        note = "dance with music: " + title;
+        gDanceStartedMusic = true;
+        return true;
+    }
+
+    note = "dance without music";
+    gDanceStartedMusic = false;
+    return false;
+}
+
 static float clampFloat(float value, float minValue, float maxValue) {
     if (value < minValue) return minValue;
     if (value > maxValue) return maxValue;
@@ -276,8 +344,8 @@ static float rateLimitAngle(float current, float target, float maxDelta) {
 static void resetServoTestControl() {
     gServoFilteredPanInput = 0.0f;
     gServoFilteredTiltInput = 0.0f;
-    gServoPanAngle = static_cast<float>(SERVO_PAN_CENTER_DEG);
-    gServoTiltAngle = static_cast<float>(SERVO_TILT_CENTER_DEG);
+    gServoPanAngle = static_cast<float>(SERVO_TEST_PAN_CENTER_DEG);
+    gServoTiltAngle = static_cast<float>(SERVO_TEST_TILT_CENTER_DEG);
     gLastServoUpdate = 0;
     gLastServoSerialLog = 0;
 }
@@ -312,8 +380,8 @@ static void updateServoTestFromImu(unsigned long now) {
     gServoFilteredPanInput += (rawPan - gServoFilteredPanInput) * SERVO_TEST_FILTER_ALPHA;
     gServoFilteredTiltInput += (rawTilt - gServoFilteredTiltInput) * SERVO_TEST_FILTER_ALPHA;
 
-    float targetPan = static_cast<float>(SERVO_PAN_CENTER_DEG) + gServoFilteredPanInput;
-    float targetTilt = static_cast<float>(SERVO_TILT_CENTER_DEG) + gServoFilteredTiltInput;
+    float targetPan = static_cast<float>(SERVO_TEST_PAN_CENTER_DEG) + gServoFilteredPanInput;
+    float targetTilt = static_cast<float>(SERVO_TEST_TILT_CENTER_DEG) + gServoFilteredTiltInput;
     targetPan = clampFloat(targetPan, SERVO_SAFE_MIN_DEG, SERVO_SAFE_MAX_DEG);
     targetTilt = clampFloat(targetTilt, SERVO_SAFE_MIN_DEG, SERVO_SAFE_MAX_DEG);
 
@@ -357,6 +425,7 @@ static ServoMotionAction toServoMotionAction(ServoAiAction action) {
         case ServoAiAction::DOWN: return ServoMotionAction::DOWN;
         case ServoAiAction::NOD: return ServoMotionAction::NOD;
         case ServoAiAction::SHAKE: return ServoMotionAction::SHAKE;
+        case ServoAiAction::DANCE: return ServoMotionAction::DANCE;
         case ServoAiAction::RELEASE: return ServoMotionAction::RELEASE;
         default: return ServoMotionAction::NONE;
     }
@@ -371,6 +440,7 @@ static const char* servoAiActionName(ServoAiAction action) {
         case ServoAiAction::DOWN: return "down";
         case ServoAiAction::NOD: return "nod";
         case ServoAiAction::SHAKE: return "shake";
+        case ServoAiAction::DANCE: return "dance";
         case ServoAiAction::RELEASE: return "release";
         default: return "unknown";
     }
@@ -469,7 +539,8 @@ static void updateSharedServoMotion(unsigned long now) {
                                      "Face tracking");
     }
 
-    if (state == AppStateEnum::FACE || state == AppStateEnum::AI) {
+    if ((state == AppStateEnum::FACE || state == AppStateEnum::AI) &&
+        !gServoMotionController.isDanceActive()) {
         FaceEmotion emotion = AppState::instance().getEmotion();
         if (emotion != gLastServoPoseEmotion) {
             gLastServoPoseEmotion = emotion;
@@ -482,6 +553,77 @@ static void updateSharedServoMotion(unsigned long now) {
         state == AppStateEnum::CAMERA_DEBUG ||
         state == AppStateEnum::AI_VISION) {
         gServoMotionController.update(now);
+    }
+}
+
+static void updateDanceLifecycle(unsigned long now) {
+    (void)now;
+    if (!gDanceActive || gServoMotionController.isDanceActive()) return;
+
+    gDanceActive = false;
+    if (gDanceStartedMusic) {
+        gMusicManager.stop();
+        gMusicUI.markDirty();
+        gDanceStartedMusic = false;
+    }
+
+    AppStateEnum state = AppState::instance().getState();
+    if (state == AppStateEnum::FACE || state == AppStateEnum::AI) {
+        if (AppState::instance().getEmotion() == FaceEmotion::HAPPY) {
+            AppState::instance().setEmotion(gDancePrevEmotion);
+            gLastServoPoseEmotion = gDancePrevEmotion;
+            applyServoPoseForEmotion(gDancePrevEmotion);
+        }
+        gFaceUI.setStatusText("Dance done", UiTheme::TEXT_DIM, 1200);
+    }
+}
+
+static void updateCompanionMotion(unsigned long now) {
+    AppStateEnum state = AppState::instance().getState();
+    if (state == AppStateEnum::SERVO_TEST ||
+        state == AppStateEnum::CAMERA_DEBUG ||
+        state == AppStateEnum::AI_VISION ||
+        state == AppStateEnum::POMODORO ||
+        state == AppStateEnum::MUSIC ||
+        state == AppStateEnum::AFFINITY ||
+        gServoMotionController.isDanceActive() ||
+        gPetReactActive ||
+        gSickActive) {
+        return;
+    }
+
+    if (state == AppStateEnum::AI &&
+        AppState::instance().getEmotion() == FaceEmotion::SPEAKING &&
+        now >= gNextSpeakingNodAt) {
+        gSpeakingNodDown = !gSpeakingNodDown;
+        gServoMotionController.lookOffset(0.0f, gSpeakingNodDown ? 5.0f : -4.0f,
+                                          38.0f, "Speaking nod");
+        gNextSpeakingNodAt = now + 1200;
+        return;
+    }
+
+    if (state != AppStateEnum::FACE) return;
+    FaceEmotion emotion = AppState::instance().getEmotion();
+    if (emotion != FaceEmotion::NORMAL && emotion != FaceEmotion::HAPPY) return;
+    if (now < gNextCompanionMotionAt) return;
+
+    int affinity = gAffinityManager.value();
+    unsigned long interval = affinity >= 75 ? 4500 : (affinity >= 50 ? 6500 : 9000);
+    gNextCompanionMotionAt = now + interval + random(0, 1800);
+
+    int pattern = random(0, affinity >= 75 ? 4 : 3);
+    if (pattern == 0) {
+        float pan = random(0, 2) == 0 ? -8.0f : 8.0f;
+        gFaceUI.setTemporaryGaze(pan < 0 ? -0.45f : 0.45f, -0.05f, 1100);
+        gServoMotionController.lookOffset(pan, -2.0f, 30.0f, "Companion glance");
+    } else if (pattern == 1) {
+        gFaceUI.setTemporaryGaze(0.0f, -0.25f, 1000);
+        gServoMotionController.lookOffset(0.0f, -5.0f, 28.0f, "Companion look");
+    } else if (pattern == 2) {
+        gFaceUI.setTemporaryGaze(0.0f, 0.18f, 900);
+        gServoMotionController.lookOffset(0.0f, 4.0f, 28.0f, "Companion dip");
+    } else {
+        gServoMotionController.command(ServoMotionAction::NOD);
     }
 }
 
@@ -596,6 +738,7 @@ static void handleFaceTap(int x, int y) {
     int cy = DISPLAY_HEIGHT / 2;
     AppState& appState = AppState::instance();
     gPomodoroFaceEmotionActive = false;
+    addAffinity(1, "Touch");
 
     if (y < cy / 2) {
         appState.setEmotion(FaceEmotion::HAPPY);
@@ -668,6 +811,11 @@ void uiTask(void* pvParameters) {
 
                 case AppStateEnum::SERVO_TEST:
                     gServoTestUI.update();
+                    break;
+
+                case AppStateEnum::AFFINITY:
+                    updateAffinityUiData();
+                    gAffinityUI.update();
                     break;
 
                 case AppStateEnum::AI:
@@ -901,6 +1049,7 @@ static void handleCameraShot() {
     bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
     if (ok) {
         gCameraDebugUI.setLastPhotoPath(path.c_str());
+        addAffinity(2, "Photo saved");
         if (trackingNote.length() > 0) {
             status += "; ";
             status += trackingNote;
@@ -974,15 +1123,20 @@ static void handleXiaoZhiTranscript(const String& text) {
                         containsAny(lower, "nod");
     bool asksServoShake = containsAny(text, "摇摇头", "摇头") ||
                           containsAny(lower, "shake head");
+    bool asksServoDance = containsAny(text, "跳舞", "跳一段舞", "来段舞") ||
+                          containsAny(text, "扭一扭", "蹦迪") ||
+                          containsAny(lower, "dance");
     bool asksServoRelease = containsAny(text, "释放舵机", "松开舵机", "关闭舵机") ||
                             containsAny(lower, "release servo");
     bool asksServo = asksServoLeft || asksServoRight || asksServoUp || asksServoDown ||
-                     asksServoCenter || asksServoNod || asksServoShake || asksServoRelease;
+                     asksServoCenter || asksServoNod || asksServoShake || asksServoDance ||
+                     asksServoRelease;
 
     if (asksServo) {
         gPendingAiTool = PendingAiTool::SERVO_CONTROL;
         gPendingAiCallId = -1;
         if (asksServoRelease) gPendingAiServoAction = ServoAiAction::RELEASE;
+        else if (asksServoDance) gPendingAiServoAction = ServoAiAction::DANCE;
         else if (asksServoNod) gPendingAiServoAction = ServoAiAction::NOD;
         else if (asksServoShake) gPendingAiServoAction = ServoAiAction::SHAKE;
         else if (asksServoLeft) gPendingAiServoAction = ServoAiAction::LEFT;
@@ -1121,6 +1275,7 @@ static void processCameraCapturePhoto(int callId) {
     bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
     if (ok) {
         Serial.printf("Voice photo saved: %s (%s)\n", path.c_str(), trackingNote.c_str());
+        addAffinity(2, "Photo saved");
         String result = "Photo saved: " + path;
         if (trackingNote.length() > 0) {
             result += "; ";
@@ -1352,6 +1507,7 @@ static void processPetReact(int callId) {
 
     const char* name = petReactionName(reaction);
     gFaceUI.setStatusText(name, UiTheme::CYAN, PET_REACT_DURATION_MS);
+    addAffinity(2, name);
 
     if (callId >= 0) {
         gXiaoZhiClient.queueMcpToolTextResult(callId,
@@ -1379,6 +1535,28 @@ static void processServoControl(int callId) {
     bool ok = false;
     if (motionAction == ServoMotionAction::RELEASE) {
         ok = gServoMotionController.release();
+    } else if (motionAction == ServoMotionAction::DANCE) {
+        String musicNote = "dance without music";
+        ok = gServoMotionController.ensureReady() &&
+             gServoMotionController.command(motionAction);
+        if (ok) {
+            gDanceActive = true;
+            gDancePrevEmotion = AppState::instance().getEmotion();
+            AppState::instance().setEmotion(FaceEmotion::HAPPY);
+            gLastServoPoseEmotion = FaceEmotion::HAPPY;
+            gFaceUI.setStatusText("Dance!", UiTheme::PINK, 6500);
+            addAffinity(5, "Dance");
+            startDanceMusic(musicNote);
+        } else {
+            gDanceStartedMusic = false;
+        }
+        String result = String("Servo action: ") + servoAiActionName(action);
+        result += ok ? String("; ") + musicNote : String(" failed: ") + gServoMotionController.statusText();
+        if (callId >= 0) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, result, !ok);
+        }
+        Serial.printf("AI servo control: %s ok=%d\n", servoAiActionName(action), ok ? 1 : 0);
+        return;
     } else {
         ok = gServoMotionController.ensureReady() &&
              gServoMotionController.command(motionAction);
@@ -1589,6 +1767,7 @@ static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst argumen
             else if (actionStr == "down") action = ServoAiAction::DOWN;
             else if (actionStr == "nod") action = ServoAiAction::NOD;
             else if (actionStr == "shake") action = ServoAiAction::SHAKE;
+            else if (actionStr == "dance") action = ServoAiAction::DANCE;
             else if (actionStr == "release") action = ServoAiAction::RELEASE;
         }
         gPendingAiTool = PendingAiTool::SERVO_CONTROL;
@@ -1617,6 +1796,10 @@ static void gestureEventHandler(const GestureEvent& event) {
                     break;
                 case GestureType::LEFT_SWIPE:
                     appState.setState(AppStateEnum::AI);
+                    break;
+                case GestureType::DOWN_SWIPE:
+                    updateAffinityUiData();
+                    appState.setState(AppStateEnum::AFFINITY);
                     break;
                 case GestureType::SINGLE_TAP:
                     handleFaceTap(event.endX, event.endY);
@@ -1822,7 +2005,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                 }
                 resetServoTestControl();
                 gServoTestTrackingEnabled = true;
-                gServoController.center();
+                gServoController.setPanTilt(SERVO_TEST_PAN_CENTER_DEG, SERVO_TEST_TILT_CENTER_DEG);
                 gServoTestUI.markDirty();
                 Serial.println("Servo Test: center");
                 break;
@@ -1842,6 +2025,24 @@ static void gestureEventHandler(const GestureEvent& event) {
                                               gServoPanAngle,
                                               gServoTiltAngle,
                                               gServoController.isReleased());
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
+
+        case AppStateEnum::AFFINITY: {
+            AffinityHitZone hit = gAffinityUI.hitTest(event.endX, event.endY);
+            if (event.type == GestureType::SINGLE_TAP &&
+                hit == AffinityHitZone::AFFINITY_HIT_BACK) {
+                appState.setState(AppStateEnum::FACE);
+                break;
+            }
+            switch (event.type) {
+                case GestureType::LEFT_SWIPE:
+                case GestureType::UP_SWIPE:
+                    appState.setState(AppStateEnum::FACE);
                     break;
                 default:
                     break;
@@ -1879,6 +2080,9 @@ static void stateChangeHandler(AppStateEnum state) {
     if (state != AppStateEnum::CAMERA_DEBUG && state != AppStateEnum::AI_VISION) {
         gPhotoFaceTrackingActive = false;
     }
+    if (state != AppStateEnum::AFFINITY) {
+        gAffinityUI.hide();
+    }
 
     switch (state) {
         case AppStateEnum::FACE:
@@ -1897,6 +2101,17 @@ static void stateChangeHandler(AppStateEnum state) {
             } else {
                 gPomodoroFaceEmotionActive = false;
                 AppState::instance().setEmotion(FaceEmotion::NORMAL);
+                if (gAffinityManager.value() >= 75) {
+                    AppState::instance().setEmotion(FaceEmotion::HAPPY);
+                    gFaceUI.setStatusText("Best Friend", UiTheme::PINK, 1800);
+                    gAffinityWelcomeActive = true;
+                    gAffinityWelcomeUntil = millis() + 1800;
+                } else if (gAffinityManager.value() < 25) {
+                    AppState::instance().setEmotion(FaceEmotion::SHY);
+                    gFaceUI.setStatusText("Shy", UiTheme::CYAN, 1800);
+                    gAffinityWelcomeActive = true;
+                    gAffinityWelcomeUntil = millis() + 1800;
+                }
             }
             gSickActive = false;
             gSickUntil = 0;
@@ -1922,6 +2137,7 @@ static void stateChangeHandler(AppStateEnum state) {
             stopMusicForExclusiveAudio();
             gFaceUI.clearStatusText();
             gPetReactActive = false;
+            gAiListeningAffinityAwarded = false;
             if (gWifiManager.isConnected()) {
                 AppState::instance().setEmotion(FaceEmotion::LISTENING);
                 if (gXiaoZhiClient.isActivated()) {
@@ -2047,7 +2263,7 @@ static void stateChangeHandler(AppStateEnum state) {
             resetServoTestControl();
             bool servoReady = gServoController.begin();
             if (servoReady) {
-                gServoController.center();
+                gServoController.setPanTilt(SERVO_TEST_PAN_CENTER_DEG, SERVO_TEST_TILT_CENTER_DEG);
             }
             gServoTestUI.show();
             gServoTestUI.setTelemetry(servoReady,
@@ -2062,6 +2278,16 @@ static void stateChangeHandler(AppStateEnum state) {
             Serial.println(servoReady ? "Servo Test: started" : "Servo Test: PCA9685 unavailable");
             break;
         }
+
+        case AppStateEnum::AFFINITY:
+            gMenuUI.hide();
+            gCameraDebugUI.hide();
+            gPomodoroUI.hide();
+            gInfoUI.hide();
+            gMusicUI.hide();
+            updateAffinityUiData();
+            gAffinityUI.show();
+            break;
 
         case AppStateEnum::SLEEP:
             if (takeDisplayLock()) {
@@ -2088,7 +2314,13 @@ static void aiStateHandler(VoiceState voiceState) {
     if (appState.getState() == AppStateEnum::AI) {
         switch (voiceState) {
             case VoiceState::IDLE:       appState.setEmotion(FaceEmotion::NORMAL); break;
-            case VoiceState::LISTENING:  appState.setEmotion(FaceEmotion::LISTENING); break;
+            case VoiceState::LISTENING:
+                appState.setEmotion(FaceEmotion::LISTENING);
+                if (!gAiListeningAffinityAwarded && gXiaoZhiClient.isListeningStarted()) {
+                    addAffinity(1, "AI listening");
+                    gAiListeningAffinityAwarded = true;
+                }
+                break;
             case VoiceState::THINKING:   appState.setEmotion(FaceEmotion::THINKING); break;
             case VoiceState::SPEAKING:   appState.setEmotion(FaceEmotion::SPEAKING); break;
             case VoiceState::ERROR:      appState.setEmotion(FaceEmotion::SURPRISED); break;
@@ -2142,6 +2374,7 @@ static void processPomodoroCompletion(unsigned long now) {
     gPomodoroFaceEmotion = pomodoroEmotionForPreset(presetIndex);
     gPomodoroFaceEmotionPending = true;
     gPomodoroFaceEmotionActive = false;
+    addAffinity(3, "Pomodoro done");
     startPomodoroMelody();
     Serial.printf("Pomodoro complete: preset=%d emotion=%d\n",
                   presetIndex, static_cast<int>(gPomodoroFaceEmotion));
@@ -2255,6 +2488,7 @@ void setup() {
     gPomodoroUI.begin();
     gMusicUI.begin();
     gServoTestUI.begin();
+    gAffinityUI.begin();
     gServoMotionController.attach(gServoController);
     gPomodoroUI.setCompleteCallback(handlePomodoroComplete);
 
@@ -2266,6 +2500,8 @@ void setup() {
     bool sdOk = gStorageManager.begin();
     gMusicManager.begin(&gStorageManager);
     bootStep(sdOk ? "SD ready" : "SD not found (will retry)", 7);
+
+    gAffinityManager.begin();
 
     bootStep("IMU Orientation...", 8);
     gImuOrientation.begin();
@@ -2333,6 +2569,16 @@ void loop() {
 
     AppStateEnum state = AppState::instance().getState();
     updateSharedServoMotion(now);
+    updateDanceLifecycle(now);
+    updateCompanionMotion(now);
+
+    if (state == AppStateEnum::AI &&
+        !gAiListeningAffinityAwarded &&
+        gXiaoZhiClient.getState() == VoiceState::LISTENING &&
+        gXiaoZhiClient.isListeningStarted()) {
+        addAffinity(1, "AI listening");
+        gAiListeningAffinityAwarded = true;
+    }
 
     if (state == AppStateEnum::SERVO_TEST) {
         updateServoTestFromImu(now);
@@ -2364,6 +2610,14 @@ void loop() {
         if (gPomodoroFaceEmotionActive && now >= gPomodoroFaceEmotionUntil) {
             gPomodoroFaceEmotionActive = false;
             if (AppState::instance().getEmotion() == gPomodoroFaceEmotion) {
+                AppState::instance().setEmotion(FaceEmotion::NORMAL);
+            }
+        }
+
+        if (gAffinityWelcomeActive && now >= gAffinityWelcomeUntil) {
+            gAffinityWelcomeActive = false;
+            FaceEmotion current = AppState::instance().getEmotion();
+            if (current == FaceEmotion::HAPPY || current == FaceEmotion::SHY) {
                 AppState::instance().setEmotion(FaceEmotion::NORMAL);
             }
         }

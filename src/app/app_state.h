@@ -12,6 +12,7 @@ enum class AppStateEnum {
     MUSIC,
     SYSTEM_INFO,
     SERVO_TEST,
+    AFFINITY,
     AI,
     SLEEP
 };

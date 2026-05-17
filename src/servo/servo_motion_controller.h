@@ -14,6 +14,7 @@ enum class ServoMotionAction : uint8_t {
     DOWN,
     NOD,
     SHAKE,
+    DANCE,
     RELEASE
 };
 
@@ -24,6 +25,7 @@ public:
     bool ensureReady(unsigned long now = millis());
     bool isReady() const;
     bool isReleased() const;
+    bool isDanceActive() const;
     const String& statusText() const;
 
     void update(unsigned long now);
@@ -46,14 +48,16 @@ private:
     enum class Sequence : uint8_t {
         NONE = 0,
         NOD,
-        SHAKE
+        SHAKE,
+        DANCE
     };
 
     float clampAngle(float angleDeg) const;
     float applyPanOffset(float offsetDeg) const;
     float applyTiltOffset(float offsetDeg) const;
     void setActualTarget(float panDeg, float tiltDeg, float speedDps, const char* status);
-    void startSequence(Sequence sequence, const char* status);
+    void startSequence(Sequence sequence, const char* status,
+                       float speedDps = SERVO_FACE_MOTION_SPEED_DPS);
     void advanceSequence(unsigned long now);
     void syncFromServo();
 

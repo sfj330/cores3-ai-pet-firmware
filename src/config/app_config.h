@@ -108,8 +108,10 @@ constexpr int SERVO_TILT_CHANNEL = 1;
 constexpr int SERVO_MIN_PULSE_US = 600;
 constexpr int SERVO_MAX_PULSE_US = 2400;
 constexpr int SERVO_PAN_CENTER_DEG = 90;
-constexpr int SERVO_TILT_CENTER_DEG = 170;
+constexpr int SERVO_TILT_CENTER_DEG = 140;
 constexpr int SERVO_CENTER_DEG = SERVO_PAN_CENTER_DEG;
+constexpr int SERVO_TEST_PAN_CENTER_DEG = 90;
+constexpr int SERVO_TEST_TILT_CENTER_DEG = 90;
 constexpr int SERVO_SAFE_MIN_DEG = 10;
 constexpr int SERVO_SAFE_MAX_DEG = 170;
 constexpr bool SERVO_PAN_INVERT = false;
@@ -126,10 +128,22 @@ constexpr unsigned long SERVO_MOTION_BEGIN_RETRY_MS = 3000;
 constexpr float SERVO_FACE_PAN_OFFSET_DEG = 24.0f;
 constexpr float SERVO_FACE_TILT_OFFSET_DEG = 18.0f;
 constexpr float SERVO_FACE_SMALL_TILT_DEG = 12.0f;
+constexpr float SERVO_DANCE_MOTION_SPEED_DPS = 75.0f;
+constexpr float SERVO_DANCE_PAN_OFFSET_DEG = 28.0f;
+constexpr float SERVO_DANCE_TILT_UP_DEG = 12.0f;
+constexpr float SERVO_DANCE_TILT_DOWN_DEG = 16.0f;
 constexpr float SERVO_FACE_TRACK_GAIN_DEG = 7.0f;
 constexpr float SERVO_FACE_TRACK_DEADBAND = 0.08f;
 constexpr float SERVO_FACE_TRACK_FILTER_ALPHA = 0.35f;
 constexpr unsigned long SERVO_PHOTO_TRACK_SETTLE_MS = 2000;
+
+// ==================== Music ====================
+constexpr uint8_t MUSIC_SPEAKER_VOLUME = 96;
+
+// ==================== Affinity ====================
+constexpr int AFFINITY_DEFAULT_VALUE = 35;
+constexpr int AFFINITY_MIN_VALUE = 0;
+constexpr int AFFINITY_MAX_VALUE = 100;
 
 // ==================== Task Priorities ====================
 constexpr bool SERIAL_DIAGNOSTIC_HEARTBEAT = false;

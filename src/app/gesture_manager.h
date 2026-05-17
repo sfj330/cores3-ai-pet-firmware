@@ -9,6 +9,8 @@ enum class GestureType {
     DOUBLE_TAP,
     RIGHT_SWIPE,
     LEFT_SWIPE,
+    UP_SWIPE,
+    DOWN_SWIPE,
     LONG_PRESS
 };
 

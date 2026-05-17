@@ -768,13 +768,13 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
     {
         JsonObject t = tools.add<JsonObject>();
         t["name"] = "self.servo.control";
-        t["description"] = "Control the CoreS3 two-axis servo head. Use for look left, look right, look up, look down, center, nod, shake head, or release servos.";
+        t["description"] = "Control the CoreS3 two-axis servo head. Use for look left, look right, look up, look down, center, nod, shake head, dance, or release servos.";
         JsonObject s = t["inputSchema"].to<JsonObject>();
         s["type"] = "object";
         JsonObject p = s["properties"].to<JsonObject>();
         JsonObject action = p["action"].to<JsonObject>();
         action["type"] = "string";
-        action["description"] = "Servo action: center, left, right, up, down, nod, shake, release";
+        action["description"] = "Servo action: center, left, right, up, down, nod, shake, dance, release";
         JsonArray actionEnum = action["enum"].to<JsonArray>();
         actionEnum.add("center");
         actionEnum.add("left");
@@ -783,6 +783,7 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
         actionEnum.add("down");
         actionEnum.add("nod");
         actionEnum.add("shake");
+        actionEnum.add("dance");
         actionEnum.add("release");
     }
 

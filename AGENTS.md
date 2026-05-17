@@ -15,14 +15,15 @@ Active demo firmware. The project is no longer in the planning-only stage.
 Implemented:
 
 - Animated face UI with 11 emotions: `NORMAL`, `HAPPY`, `CURIOUS`, `LISTENING`, `THINKING`, `SPEAKING`, `SURPRISED`, `SLEEPY`, `TRACKING`, `SHY`, `SICK`.
-- Touch gestures: tap, double tap, left/right swipe, long press.
+- Touch gestures: tap, double tap, left/right/up/down swipe, long press.
 - Menu with Wi-Fi, Camera, Timer, Music, System, and Servo app icons.
 - Camera preview and JPEG capture to SD.
 - AI Vision preview and JPEG description request through a XiaoZhi-provided vision endpoint.
 - IMU orientation based Pomodoro timer with four presets and screen rotation.
-- SD MP3/WAV music player.
-- PCA9685 servo communication test through CoreS3 PortA, mapping IMU X/Y tilt to horizontal channel 0 and vertical channel 1 in a 10-170 degree test range. The calibrated centers are pan 90 degrees and tilt 170 degrees.
-- Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, and XiaoZhi `self.servo.control` commands.
+- SD MP3/WAV music player. MP3 output is mixed to mono for the CoreS3 speaker at a conservative default volume.
+- PCA9685 servo communication test through CoreS3 PortA, mapping IMU X/Y tilt to horizontal channel 0 and vertical channel 1 in a 10-170 degree test range. Servo Test uses an independent 90/90 test center.
+- Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, XiaoZhi `self.servo.control` commands, and the dance demo. Face and XiaoZhi expression poses keep the mechanical center at pan 90 degrees and tilt 140 degrees.
+- Memory-only Bond/affinity page opened by down swipe from Face.
 - Photo face-centering framework that can drive the servos from real `FaceResult` boxes when a real detector backend is added.
 - XiaoZhi OTA activation/config, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools.
 - Wi-Fi auto reconnect, SD retry/fallback, and basic power/sleep handling.
@@ -45,6 +46,7 @@ Not implemented or intentionally disabled:
 - `MUSIC` - SD MP3/WAV player.
 - `SYSTEM_INFO` - heap, PSRAM, power, and vision status page.
 - `SERVO_TEST` - PCA9685 communication and IMU tilt servo test page.
+- `AFFINITY` - memory-only Bond page with score, level, mood, and recent interaction.
 - `AI` - XiaoZhi voice interaction page.
 - `SLEEP` - dim screen sleep page.
 
@@ -55,6 +57,7 @@ src/
 ├── main.cpp
 ├── app/
 │   ├── app_state.h/.cpp
+│   ├── affinity_manager.h/.cpp
 │   ├── gesture_manager.h/.cpp
 │   └── event_bus.h/.cpp
 ├── ai/
@@ -83,6 +86,7 @@ src/
 │   ├── info_ui.h/.cpp
 │   ├── music_ui.h/.cpp
 │   ├── servo_test_ui.h/.cpp
+│   ├── affinity_ui.h/.cpp
 │   └── ui_theme.h
 └── vision/
     ├── camera_manager.h/.cpp
@@ -108,14 +112,15 @@ src/
 
 ## Gesture Routing
 
-- Face: right swipe -> Menu; left swipe or double tap -> AI; tap top -> HAPPY + nod; tap bottom -> SHY + look down; tap left/right -> CURIOUS with gaze and pan servo; long press -> Sleep.
+- Face: right swipe -> Menu; left swipe or double tap -> AI; down swipe -> Bond; tap top -> HAPPY + nod; tap bottom -> SHY + look down; tap left/right -> CURIOUS with gaze and pan servo; long press -> Sleep.
 - AI: single tap toggles listening; right swipe or long press -> Face.
+- Bond: Back, up swipe, or left swipe -> Face.
 - Menu: tap app icon -> selected page; Back -> Face; left swipe -> Face.
 - Camera Debug: SHOT -> optionally center a real detected face, then save JPEG to `/photos`; Back or left swipe -> Menu.
 - AI Vision: Back or left swipe -> close preview and return to AI.
 - Pomodoro: IMU orientation selects preset before start; Start/Pause/Reset buttons control timer; Back or left swipe -> Menu.
 - Music: Play/Pause, Stop, Next, Back; left swipe -> Menu.
-- Servo Test: Back or left swipe -> Menu; tap center area -> center servos; long press -> release PWM.
+- Servo Test: Back or left swipe -> Menu and restore the Face/XiaoZhi 90/140 center; tap center area -> center servos at 90/90; long press -> release PWM.
 - Sleep: tap or double tap -> Face.
 
 ## XiaoZhi AI Notes
@@ -129,13 +134,14 @@ src/
 - MCP tools currently exposed:
   - `self.camera.open`
   - `self.camera.close`
+  - `self.camera.capture_photo`
   - `self.vision.describe_scene`
   - `self.pomodoro.open`
   - `self.music.control`
   - `self.pet.react`
   - `self.servo.control`
 - AI Vision only works when the XiaoZhi MCP initialize params provide a vision URL/token.
-- `self.servo.control` supports `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, and `release`. It must not switch pages or reopen the XiaoZhi audio channel.
+- `self.servo.control` supports `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, `dance`, and `release`. It must not switch pages or reopen the XiaoZhi audio channel. `dance` starts servo motion first, then uses `/music` when available; music or SD failure must not cancel the servo motion.
 
 ## Face Detection Blocker
 
@@ -160,6 +166,7 @@ Likely future paths:
 - Stop music before exclusive speaker/mic use by XiaoZhi AI or Pomodoro completion melody.
 - Do not claim local face recognition, closed-loop servo tracking, or battery voltage measurement unless those paths are actually implemented and tested.
 - Photo face tracking must report unavailable when `FaceDetector::backendAvailable()` is false; do not fake detections for demos.
+- Bond/affinity is intentionally memory-only for now; do not describe it as persistent.
 
 ## GitHub Hygiene
 
