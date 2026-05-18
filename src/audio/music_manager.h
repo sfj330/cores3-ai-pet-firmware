@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <FS.h>
+#include "config/app_config.h"
 #include "storage/storage_manager.h"
 
 enum class MusicPlaybackState {
@@ -22,11 +23,15 @@ public:
     String currentTitle() const;
     String statusText() const;
     MusicPlaybackState state() const;
+    void setVolumePreset(uint8_t volume);
+    uint8_t volumePreset() const;
 
     bool play(int index);
     void togglePause();
     void stop();
     bool next();
+    bool waitForIdle(uint32_t timeoutMs) const;
+    void releaseSpeaker();
 
 private:
     enum class TrackType : uint8_t {
@@ -71,8 +76,10 @@ private:
     volatile bool playRequested_ = false;
     volatile bool stopRequested_ = false;
     volatile bool paused_ = false;
+    volatile bool playbackActive_ = false;
     volatile MusicPlaybackState state_ = MusicPlaybackState::STOPPED;
 
     String status_ = "No music";
+    uint8_t volumePreset_ = MUSIC_SPEAKER_VOLUME;
     alignas(4) uint8_t buffers_[BUFFER_COUNT][BUFFER_BYTES] = {};
 };

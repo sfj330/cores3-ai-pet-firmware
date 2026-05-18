@@ -45,8 +45,6 @@ void FaceUI::setSpeakingMouthOpen(bool open) {
 
 void FaceUI::wake() {
     sleeping_ = false;
-    brightness_ = 255;
-    M5.Lcd.setBrightness(brightness_);
 }
 
 void FaceUI::setTemporaryGaze(float dx, float dy, unsigned long durationMs) {

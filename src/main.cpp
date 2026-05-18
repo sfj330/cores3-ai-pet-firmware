@@ -10,6 +10,7 @@
 #include "app/gesture_manager.h"
 #include "app/event_bus.h"
 #include "app/affinity_manager.h"
+#include "app/system_status.h"
 #include "ui/face_ui.h"
 #include "ui/menu_ui.h"
 #include "ui/camera_debug_ui.h"
@@ -97,7 +98,9 @@ enum class PendingAiTool : uint8_t {
     POMODORO_OPEN,
     MUSIC_CONTROL,
     PET_REACT,
-    SERVO_CONTROL
+    SERVO_CONTROL,
+    DEVICE_STATUS,
+    DEVICE_CONTROL
 };
 
 enum class MusicAction : uint8_t {
@@ -130,6 +133,33 @@ enum class ServoAiAction : uint8_t {
     RELEASE
 };
 
+enum class DevicePageAction : uint8_t {
+    NONE = 0,
+    FACE,
+    MENU,
+    WIFI,
+    SYSTEM,
+    CAMERA,
+    MUSIC,
+    POMODORO,
+    AI
+};
+
+enum class DeviceSleepAction : uint8_t {
+    NONE = 0,
+    WAKE,
+    SLEEP
+};
+
+struct DeviceControlRequest {
+    DevicePageAction page = DevicePageAction::NONE;
+    bool hasBrightness = false;
+    SystemBrightnessLevel brightness = SystemBrightnessLevel::BRIGHT;
+    bool hasVolume = false;
+    SystemVolumeLevel volume = SystemVolumeLevel::NORMAL;
+    DeviceSleepAction sleep = DeviceSleepAction::NONE;
+};
+
 static volatile PendingAiTool gPendingAiTool = PendingAiTool::NONE;
 static int gPendingAiCallId = -1;
 static int gPendingAiIntParam = 0;
@@ -137,12 +167,15 @@ static volatile bool gPendingAiBoolParam = false;
 static volatile MusicAction gPendingAiMusicAction = MusicAction::NONE;
 static volatile PetReaction gPendingAiPetReaction = PetReaction::NONE;
 static volatile ServoAiAction gPendingAiServoAction = ServoAiAction::NONE;
+static String gPendingAiStringParam = "";
+static DeviceControlRequest gPendingDeviceControl;
 
 static AppStateEnum gPomodoroReturnTo = AppStateEnum::MENU;
 static AppStateEnum gMusicReturnTo = AppStateEnum::MENU;
 
 static bool gServoTestPageActive = false;
 static bool gServoTestReadyForUpdates = false;
+static unsigned long gServoTestInputEnableAt = 0;
 static bool gServoTestTrackingEnabled = true;
 static unsigned long gLastServoUpdate = 0;
 static unsigned long gLastServoSerialLog = 0;
@@ -188,6 +221,9 @@ enum class AiVisionStatus {
 static AiVisionStatus gAiVisionStatus = AiVisionStatus::IDLE;
 static String gAiVisionStatusText = "Vision idle";
 static String gAiVisionResultText = "";
+static SystemStatusViewModel gSystemStatus;
+static SystemBrightnessLevel gUserBrightnessLevel = SystemBrightnessLevel::BRIGHT;
+static SystemVolumeLevel gUserVolumeLevel = SystemVolumeLevel::NORMAL;
 
 struct PomodoroMelodyNote {
     float frequency;
@@ -212,6 +248,7 @@ static void processPomodoroCompletion(unsigned long now);
 static void updatePomodoroMelody(unsigned long now);
 static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst arguments, int callId);
 static void handleXiaoZhiTranscript(const String& text);
+static void handleXiaoZhiTranscriptModern(const String& text);
 static void processPendingAiTool();
 static String describeAiVisionScene(JsonObjectConst arguments, bool& ok);
 static bool ensureAiVisionPreview(const char* status);
@@ -221,6 +258,20 @@ static void updateInfoUiData();
 static void updateMusicUiData();
 static void updateAffinityUiData();
 static void stopMusicForExclusiveAudio();
+static SystemStatusViewModel captureSystemStatus();
+static SystemVoiceState currentSystemVoiceState();
+static void applyBrightnessLevel(SystemBrightnessLevel level, bool rememberPreference = true);
+static void applyVolumeLevel(SystemVolumeLevel level);
+static void enterSleepMode();
+static void wakeFromSleepMode();
+static bool navigateDevicePage(DevicePageAction page);
+static String devicePageLabel(DevicePageAction page);
+static String brightnessActionLabel(SystemBrightnessLevel level);
+static String volumeActionLabel(SystemVolumeLevel level);
+static String buildDeviceStatusResponse(const String& detail);
+static String processDeviceStatus(int callId, const String& detail);
+static String processDeviceControl(int callId);
+static bool hasPendingDeviceControlAction();
 static void resetServoTestControl();
 static void updateServoTestFromImu(unsigned long now);
 static void updateSharedServoMotion(unsigned long now);
@@ -252,21 +303,222 @@ static void stopMusicForExclusiveAudio() {
     if (gMusicManager.state() == MusicPlaybackState::PLAYING ||
         gMusicManager.state() == MusicPlaybackState::PAUSED) {
         gMusicManager.stop();
+        bool idle = gMusicManager.waitForIdle(1200);
+        if (!idle) {
+            Serial.println("Music: wait for idle timed out before exclusive audio");
+        }
+        gMusicManager.releaseSpeaker();
         gMusicUI.markDirty();
+    } else if (M5.Speaker.isRunning()) {
+        gMusicManager.releaseSpeaker();
     }
 }
 
+static SystemVoiceState currentSystemVoiceState() {
+    switch (gXiaoZhiClient.getState()) {
+        case VoiceState::LISTENING: return SystemVoiceState::LISTENING;
+        case VoiceState::THINKING: return SystemVoiceState::THINKING;
+        case VoiceState::SPEAKING: return SystemVoiceState::SPEAKING;
+        case VoiceState::ERROR: return SystemVoiceState::ERROR;
+        case VoiceState::IDLE:
+        default:
+            return SystemVoiceState::IDLE;
+    }
+}
+
+static SystemStatusViewModel captureSystemStatus() {
+    SystemStatusViewModel status;
+    status.wifi.connected = gWifiManager.isConnected();
+    status.wifi.configured = gWifiManager.isConfigured();
+    status.wifi.rssi = gWifiManager.rssi();
+    status.wifi.ip = gWifiManager.ipString();
+
+    status.sd.ready = gStorageManager.isReady();
+    status.sd.statusText = gStorageManager.statusText();
+
+    switch (gMusicManager.state()) {
+        case MusicPlaybackState::PLAYING: status.music.playbackState = SystemMusicState::PLAYING; break;
+        case MusicPlaybackState::PAUSED: status.music.playbackState = SystemMusicState::PAUSED; break;
+        case MusicPlaybackState::ERROR: status.music.playbackState = SystemMusicState::ERROR; break;
+        case MusicPlaybackState::STOPPED:
+        default:
+            status.music.playbackState = SystemMusicState::STOPPED;
+            break;
+    }
+    status.music.currentTitle = gMusicManager.currentTitle();
+    status.music.statusText = gMusicManager.statusText();
+
+    status.ai.activated = gXiaoZhiClient.isActivated();
+    status.ai.wsConnected = gXiaoZhiClient.isWsConnected();
+    status.ai.audioChannelOpen = gXiaoZhiClient.isAudioChannelOpen();
+    status.ai.voiceState = currentSystemVoiceState();
+    status.ai.visionReady = gXiaoZhiClient.hasVisionEndpoint();
+
+    status.memory.heapKb = ESP.getFreeHeap() / 1024;
+    status.memory.psramKb = ESP.getFreePsram() / 1024;
+
+    status.control.brightnessLevel = gUserBrightnessLevel;
+    status.control.volumeLevel = gUserVolumeLevel;
+    return status;
+}
+
+static void applyBrightnessLevel(SystemBrightnessLevel level, bool rememberPreference) {
+    int brightness = 255;
+    switch (level) {
+        case SystemBrightnessLevel::DIM: brightness = 48; break;
+        case SystemBrightnessLevel::NORMAL: brightness = 160; break;
+        case SystemBrightnessLevel::BRIGHT:
+        default:
+            brightness = 255;
+            break;
+    }
+    if (rememberPreference) {
+        gUserBrightnessLevel = level;
+    }
+    M5.Lcd.setBrightness(brightness);
+}
+
+static void applyVolumeLevel(SystemVolumeLevel level) {
+    gUserVolumeLevel = level;
+    uint8_t musicVolume = 64;
+    uint8_t aiVolume = 160;
+    switch (level) {
+        case SystemVolumeLevel::QUIET:
+            musicVolume = 40;
+            aiVolume = 96;
+            break;
+        case SystemVolumeLevel::NORMAL:
+            musicVolume = 64;
+            aiVolume = 160;
+            break;
+        case SystemVolumeLevel::LOUD:
+            musicVolume = 80;
+            aiVolume = 200;
+            break;
+    }
+    gMusicManager.setVolumePreset(musicVolume);
+    gXiaoZhiClient.setTtsVolume(aiVolume);
+}
+
+static void enterSleepMode() {
+    gPowerManager.enterSleep();
+    M5.Lcd.setBrightness(24);
+}
+
+static void wakeFromSleepMode() {
+    gPowerManager.exitSleep();
+    applyBrightnessLevel(gUserBrightnessLevel, false);
+}
+
+static bool navigateDevicePage(DevicePageAction page) {
+    AppState& appState = AppState::instance();
+    AppStateEnum current = appState.getState();
+
+    if (current == AppStateEnum::AI_VISION && page != DevicePageAction::AI) {
+        closeAiVisionPreview();
+    }
+    if (page != DevicePageAction::AI && gXiaoZhiClient.isAudioChannelOpen()) {
+        gXiaoZhiClient.pauseForForegroundTool();
+    }
+
+    switch (page) {
+        case DevicePageAction::FACE:
+            if (current == AppStateEnum::AI) {
+                gXiaoZhiClient.closeAudioChannel();
+            }
+            appState.setState(AppStateEnum::FACE);
+            return true;
+        case DevicePageAction::MENU:
+            appState.setState(AppStateEnum::MENU);
+            return true;
+        case DevicePageAction::WIFI:
+            appState.setState(AppStateEnum::WIFI_INFO);
+            return true;
+        case DevicePageAction::SYSTEM:
+            appState.setState(AppStateEnum::SYSTEM_INFO);
+            return true;
+        case DevicePageAction::CAMERA:
+            appState.setState(AppStateEnum::CAMERA_DEBUG);
+            return true;
+        case DevicePageAction::MUSIC:
+            gMusicReturnTo = AppStateEnum::AI;
+            appState.setState(AppStateEnum::MUSIC);
+            return true;
+        case DevicePageAction::POMODORO:
+            gPomodoroReturnTo = AppStateEnum::AI;
+            appState.setState(AppStateEnum::POMODORO);
+            return true;
+        case DevicePageAction::AI:
+            appState.setState(AppStateEnum::AI);
+            return true;
+        case DevicePageAction::NONE:
+        default:
+            return false;
+    }
+}
+
+static String devicePageLabel(DevicePageAction page) {
+    switch (page) {
+        case DevicePageAction::FACE: return "主页";
+        case DevicePageAction::MENU: return "菜单页";
+        case DevicePageAction::WIFI: return "网络页";
+        case DevicePageAction::SYSTEM: return "系统页";
+        case DevicePageAction::CAMERA: return "相机页";
+        case DevicePageAction::MUSIC: return "音乐页";
+        case DevicePageAction::POMODORO: return "番茄钟";
+        case DevicePageAction::AI: return "小智页";
+        case DevicePageAction::NONE:
+        default:
+            return "";
+    }
+}
+
+static String brightnessActionLabel(SystemBrightnessLevel level) {
+    switch (level) {
+        case SystemBrightnessLevel::DIM: return "把屏幕调暗了";
+        case SystemBrightnessLevel::NORMAL: return "把屏幕调到正常亮度了";
+        case SystemBrightnessLevel::BRIGHT:
+        default:
+            return "把屏幕调亮了";
+    }
+}
+
+static String volumeActionLabel(SystemVolumeLevel level) {
+    switch (level) {
+        case SystemVolumeLevel::QUIET: return "把音量调小了";
+        case SystemVolumeLevel::NORMAL: return "把音量调回正常了";
+        case SystemVolumeLevel::LOUD:
+        default:
+            return "把音量调大了";
+    }
+}
+
+static String buildDeviceStatusResponse(const String& detail) {
+    SystemStatusViewModel status = captureSystemStatus();
+    String response = systemStatusBriefSentence1(status);
+    response += " ";
+    response += systemStatusBriefSentence2(status);
+    if (detail == "full") {
+        response += " ";
+        response += systemStatusMemorySentence(status);
+    }
+    return response;
+}
+
+static bool hasPendingDeviceControlAction() {
+    return gPendingDeviceControl.page != DevicePageAction::NONE ||
+           gPendingDeviceControl.hasBrightness ||
+           gPendingDeviceControl.hasVolume ||
+           gPendingDeviceControl.sleep != DeviceSleepAction::NONE;
+}
+
 static void updateInfoUiData() {
+    gSystemStatus = captureSystemStatus();
     gInfoUI.setWifiStatus(gWifiManager.statusText().c_str(),
                           gWifiManager.ipString().c_str(),
                           gWifiManager.rssi(),
                           gWifiManager.isConfigured());
-    gInfoUI.setSystemStatus(gPowerManager.getVoltage(),
-                            gPowerManager.getPercentage(),
-                            gPowerManager.isLowBattery(),
-                            ESP.getFreeHeap() / 1024,
-                            ESP.getFreePsram() / 1024,
-                            gAiVisionStatusText.c_str());
+    gInfoUI.setSystemStatus(gSystemStatus);
 }
 
 static void updateMusicUiData() {
@@ -352,6 +604,7 @@ static void resetServoTestControl() {
 
 static void updateServoTestFromImu(unsigned long now) {
     if (!gServoTestReadyForUpdates) return;
+    if (now < gServoTestInputEnableAt) return;
     if (gLastServoUpdate != 0 && now - gLastServoUpdate < SERVO_TEST_UPDATE_MS) return;
 
     float dtSec = SERVO_TEST_UPDATE_MS / 1000.0f;
@@ -525,7 +778,11 @@ static void applyServoPoseForEmotion(FaceEmotion emotion) {
 static void updateSharedServoMotion(unsigned long now) {
     AppStateEnum state = AppState::instance().getState();
     if (state == AppStateEnum::SERVO_TEST) {
-        gServoMotionController.suspend();
+        if (gServoTestPageActive && now < gServoTestInputEnableAt) {
+            gServoMotionController.update(now);
+        } else {
+            gServoMotionController.suspend();
+        }
         return;
     }
 
@@ -568,6 +825,9 @@ static void updateDanceLifecycle(unsigned long now) {
     }
 
     AppStateEnum state = AppState::instance().getState();
+    if (state == AppStateEnum::AI && gXiaoZhiClient.isAudioChannelOpen()) {
+        gXiaoZhiClient.resumeFromForegroundTool();
+    }
     if (state == AppStateEnum::FACE || state == AppStateEnum::AI) {
         if (AppState::instance().getEmotion() == FaceEmotion::HAPPY) {
             AppState::instance().setEmotion(gDancePrevEmotion);
@@ -1078,7 +1338,65 @@ static bool containsAny(const String& text, const char* a, const char* b = nullp
            (c != nullptr && text.indexOf(c) >= 0);
 }
 
-static void handleXiaoZhiTranscript(const String& text) {
+static DevicePageAction parseDevicePageArg(const String& page) {
+    String value = page;
+    value.toLowerCase();
+    if (value == "face") return DevicePageAction::FACE;
+    if (value == "menu") return DevicePageAction::MENU;
+    if (value == "wifi") return DevicePageAction::WIFI;
+    if (value == "system") return DevicePageAction::SYSTEM;
+    if (value == "camera") return DevicePageAction::CAMERA;
+    if (value == "music") return DevicePageAction::MUSIC;
+    if (value == "pomodoro") return DevicePageAction::POMODORO;
+    if (value == "ai") return DevicePageAction::AI;
+    return DevicePageAction::NONE;
+}
+
+static bool parseBrightnessArg(const String& value, SystemBrightnessLevel& level) {
+    String text = value;
+    text.toLowerCase();
+    if (text == "dim") {
+        level = SystemBrightnessLevel::DIM;
+        return true;
+    }
+    if (text == "normal") {
+        level = SystemBrightnessLevel::NORMAL;
+        return true;
+    }
+    if (text == "bright") {
+        level = SystemBrightnessLevel::BRIGHT;
+        return true;
+    }
+    return false;
+}
+
+static bool parseVolumeArg(const String& value, SystemVolumeLevel& level) {
+    String text = value;
+    text.toLowerCase();
+    if (text == "quiet") {
+        level = SystemVolumeLevel::QUIET;
+        return true;
+    }
+    if (text == "normal") {
+        level = SystemVolumeLevel::NORMAL;
+        return true;
+    }
+    if (text == "loud") {
+        level = SystemVolumeLevel::LOUD;
+        return true;
+    }
+    return false;
+}
+
+static DeviceSleepAction parseSleepArg(const String& value) {
+    String text = value;
+    text.toLowerCase();
+    if (text == "wake") return DeviceSleepAction::WAKE;
+    if (text == "sleep") return DeviceSleepAction::SLEEP;
+    return DeviceSleepAction::NONE;
+}
+
+static void handleXiaoZhiTranscriptLegacy(const String& text) {
     String lower = text;
     lower.toLowerCase();
     bool asksDescribe = containsAny(text, "这是什么", "看到什么", "看到了什么") ||
@@ -1219,6 +1537,140 @@ static void handleXiaoZhiTranscript(const String& text) {
         gPendingAiCallId = -1;
         Serial.println("AI transcript fallback: open camera");
     }
+}
+
+static void handleXiaoZhiTranscript(const String& text) {
+    String lower = text;
+    lower.toLowerCase();
+
+    bool asksStatus = containsAny(text, "现在状态怎么样", "系统状态", "网络状态") ||
+                      containsAny(lower, "device status", "system status", "network status");
+    bool asksOpenSystem = containsAny(text, "打开系统页", "进入系统页", "系统页");
+    bool asksOpenMusic = containsAny(text, "打开音乐", "进入音乐页", "音乐页");
+    bool asksOpenCameraPage = containsAny(text, "打开相机页", "进入相机页", "打开相机页面");
+    bool asksOpenPomodoroPage = containsAny(text, "打开番茄钟", "进入番茄钟", "打开计时器");
+    bool asksGoHome = containsAny(text, "回到主页", "回主页", "打开主页");
+    bool asksBrighter = containsAny(text, "调亮一点", "亮一点", "调亮屏幕");
+    bool asksDimmer = containsAny(text, "调暗一点", "暗一点", "调暗屏幕");
+    bool asksLouder = containsAny(text, "大声一点", "音量大一点", "调大音量");
+    bool asksQuieter = containsAny(text, "小声一点", "音量小一点", "调小音量");
+    bool asksSleep = containsAny(text, "睡觉", "休眠", "进入睡眠");
+    bool asksWake = containsAny(text, "唤醒", "醒来", "叫醒");
+
+    if (asksStatus) {
+        gPendingAiTool = PendingAiTool::DEVICE_STATUS;
+        gPendingAiCallId = -1;
+        gPendingAiStringParam = "brief";
+        Serial.println("AI transcript fallback: device status");
+        return;
+    }
+
+    if (asksOpenSystem || asksOpenMusic || asksOpenCameraPage || asksOpenPomodoroPage ||
+        asksGoHome || asksBrighter || asksDimmer || asksLouder || asksQuieter ||
+        asksSleep || asksWake) {
+        gPendingDeviceControl = DeviceControlRequest{};
+        if (asksOpenSystem) gPendingDeviceControl.page = DevicePageAction::SYSTEM;
+        else if (asksOpenMusic) gPendingDeviceControl.page = DevicePageAction::MUSIC;
+        else if (asksOpenCameraPage) gPendingDeviceControl.page = DevicePageAction::CAMERA;
+        else if (asksOpenPomodoroPage) gPendingDeviceControl.page = DevicePageAction::POMODORO;
+        else if (asksGoHome) gPendingDeviceControl.page = DevicePageAction::FACE;
+
+        if (asksBrighter) {
+            gPendingDeviceControl.hasBrightness = true;
+            gPendingDeviceControl.brightness = SystemBrightnessLevel::BRIGHT;
+        } else if (asksDimmer) {
+            gPendingDeviceControl.hasBrightness = true;
+            gPendingDeviceControl.brightness = SystemBrightnessLevel::DIM;
+        }
+
+        if (asksLouder) {
+            gPendingDeviceControl.hasVolume = true;
+            gPendingDeviceControl.volume = SystemVolumeLevel::LOUD;
+        } else if (asksQuieter) {
+            gPendingDeviceControl.hasVolume = true;
+            gPendingDeviceControl.volume = SystemVolumeLevel::QUIET;
+        }
+
+        if (asksWake) gPendingDeviceControl.sleep = DeviceSleepAction::WAKE;
+        else if (asksSleep) gPendingDeviceControl.sleep = DeviceSleepAction::SLEEP;
+
+        gPendingAiTool = PendingAiTool::DEVICE_CONTROL;
+        gPendingAiCallId = -1;
+        Serial.println("AI transcript fallback: device control");
+        return;
+    }
+
+    handleXiaoZhiTranscriptLegacy(text);
+}
+
+static void handleXiaoZhiTranscriptModern(const String& text) {
+    String lower = text;
+    lower.toLowerCase();
+
+    bool asksStatus = containsAny(text, "现在状态怎么样", "系统状态", "网络状态") ||
+                      containsAny(lower, "device status", "system status", "network status");
+    bool asksOpenSystem = containsAny(text, "打开系统页", "进入系统页", "系统页");
+    bool asksOpenMusic = containsAny(text, "打开音乐", "进入音乐页", "音乐页");
+    bool asksOpenCameraPage = containsAny(text, "打开相机页", "进入相机页", "打开相机页面");
+    bool asksOpenPomodoroPage = containsAny(text, "打开番茄钟", "进入番茄钟", "打开计时器");
+    bool asksOpenWifiPage = containsAny(text, "打开网络页", "打开wifi页", "进入网络页");
+    bool asksOpenAiPage = containsAny(text, "打开小智", "回到小智", "进入小智");
+    bool asksOpenMenu = containsAny(text, "打开菜单", "回到菜单", "菜单页");
+    bool asksGoHome = containsAny(text, "回到主页", "回主页", "打开主页");
+    bool asksBrighter = containsAny(text, "调亮一点", "亮一点", "调亮屏幕");
+    bool asksDimmer = containsAny(text, "调暗一点", "暗一点", "调暗屏幕");
+    bool asksLouder = containsAny(text, "大声一点", "音量大一点", "调大音量");
+    bool asksQuieter = containsAny(text, "小声一点", "音量小一点", "调小音量");
+    bool asksSleep = containsAny(text, "睡觉", "休眠", "进入睡眠");
+    bool asksWake = containsAny(text, "唤醒", "醒来", "叫醒");
+
+    if (asksStatus) {
+        gPendingAiTool = PendingAiTool::DEVICE_STATUS;
+        gPendingAiCallId = -1;
+        gPendingAiStringParam = "brief";
+        Serial.println("AI transcript modern: device status");
+        return;
+    }
+
+    if (asksOpenSystem || asksOpenMusic || asksOpenCameraPage || asksOpenPomodoroPage ||
+        asksOpenWifiPage || asksOpenAiPage || asksOpenMenu || asksGoHome ||
+        asksBrighter || asksDimmer || asksLouder || asksQuieter || asksSleep || asksWake) {
+        gPendingDeviceControl = DeviceControlRequest{};
+        if (asksOpenSystem) gPendingDeviceControl.page = DevicePageAction::SYSTEM;
+        else if (asksOpenMusic) gPendingDeviceControl.page = DevicePageAction::MUSIC;
+        else if (asksOpenCameraPage) gPendingDeviceControl.page = DevicePageAction::CAMERA;
+        else if (asksOpenPomodoroPage) gPendingDeviceControl.page = DevicePageAction::POMODORO;
+        else if (asksOpenWifiPage) gPendingDeviceControl.page = DevicePageAction::WIFI;
+        else if (asksOpenAiPage) gPendingDeviceControl.page = DevicePageAction::AI;
+        else if (asksOpenMenu) gPendingDeviceControl.page = DevicePageAction::MENU;
+        else if (asksGoHome) gPendingDeviceControl.page = DevicePageAction::FACE;
+
+        if (asksBrighter) {
+            gPendingDeviceControl.hasBrightness = true;
+            gPendingDeviceControl.brightness = SystemBrightnessLevel::BRIGHT;
+        } else if (asksDimmer) {
+            gPendingDeviceControl.hasBrightness = true;
+            gPendingDeviceControl.brightness = SystemBrightnessLevel::DIM;
+        }
+
+        if (asksLouder) {
+            gPendingDeviceControl.hasVolume = true;
+            gPendingDeviceControl.volume = SystemVolumeLevel::LOUD;
+        } else if (asksQuieter) {
+            gPendingDeviceControl.hasVolume = true;
+            gPendingDeviceControl.volume = SystemVolumeLevel::QUIET;
+        }
+
+        if (asksWake) gPendingDeviceControl.sleep = DeviceSleepAction::WAKE;
+        else if (asksSleep) gPendingDeviceControl.sleep = DeviceSleepAction::SLEEP;
+
+        gPendingAiTool = PendingAiTool::DEVICE_CONTROL;
+        gPendingAiCallId = -1;
+        Serial.println("AI transcript modern: device control");
+        return;
+    }
+
+    handleXiaoZhiTranscript(text);
 }
 
 static void processCameraOpen(int callId) {
@@ -1466,6 +1918,100 @@ static void processMusicControl(int callId) {
     }
 }
 
+static String processDeviceStatus(int callId, const String& detail) {
+    String normalized = detail;
+    normalized.toLowerCase();
+    if (normalized != "full") {
+        normalized = "brief";
+    }
+    String result = buildDeviceStatusResponse(normalized);
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
+    }
+    return result;
+}
+
+static String processDeviceControl(int callId) {
+    DeviceControlRequest request = gPendingDeviceControl;
+    gPendingDeviceControl = DeviceControlRequest{};
+
+    if (request.page == DevicePageAction::NONE &&
+        !request.hasBrightness &&
+        !request.hasVolume &&
+        request.sleep == DeviceSleepAction::NONE) {
+        String response = "这次没有收到有效的设备控制指令。";
+        if (callId >= 0) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, response, true);
+        }
+        return response;
+    }
+
+    if (request.sleep == DeviceSleepAction::WAKE && AppState::instance().getState() == AppStateEnum::SLEEP) {
+        AppState::instance().setState(AppStateEnum::FACE);
+        if (takeDisplayLock()) {
+            wakeFromSleepMode();
+            gFaceUI.wake();
+            giveDisplayLock();
+        }
+    } else if (request.sleep == DeviceSleepAction::WAKE && gPowerManager.isSleeping()) {
+        wakeFromSleepMode();
+    }
+
+    String response = "我已经处理好了。";
+    bool changed = false;
+
+    if (request.page != DevicePageAction::NONE) {
+        if (navigateDevicePage(request.page)) {
+            response = String("我已经切到") + devicePageLabel(request.page) + "了。";
+            changed = true;
+        }
+    }
+
+    if (request.hasBrightness) {
+        applyBrightnessLevel(request.brightness, true);
+        response = String("我已经") + brightnessActionLabel(request.brightness);
+        if (request.page != DevicePageAction::NONE) {
+            response += "，也切到" + devicePageLabel(request.page) + "了。";
+        } else {
+            response += "。";
+        }
+        changed = true;
+    }
+
+    if (request.hasVolume) {
+        applyVolumeLevel(request.volume);
+        response = String("我已经") + volumeActionLabel(request.volume);
+        if (request.hasBrightness) {
+            response = String("我已经") + brightnessActionLabel(request.brightness) + "，也" +
+                       volumeActionLabel(request.volume) + "。";
+        } else if (request.page != DevicePageAction::NONE) {
+            response += "，也切到" + devicePageLabel(request.page) + "了。";
+        } else {
+            response += "。";
+        }
+        changed = true;
+    }
+
+    if (request.sleep == DeviceSleepAction::SLEEP) {
+        AppState::instance().setState(AppStateEnum::SLEEP);
+        if (takeDisplayLock()) {
+            enterSleepMode();
+            giveDisplayLock();
+        }
+        response = "我先睡一会儿了。";
+        changed = true;
+    }
+
+    if (!changed) {
+        response = "这次没有收到有效的设备控制指令。";
+    }
+
+    if (callId >= 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, response, !changed);
+    }
+    return response;
+}
+
 static FaceEmotion petReactionToEmotion(PetReaction reaction) {
     switch (reaction) {
         case PetReaction::HAPPY: return FaceEmotion::HAPPY;
@@ -1537,6 +2083,9 @@ static void processServoControl(int callId) {
         ok = gServoMotionController.release();
     } else if (motionAction == ServoMotionAction::DANCE) {
         String musicNote = "dance without music";
+        if (gXiaoZhiClient.isAudioChannelOpen()) {
+            gXiaoZhiClient.pauseForForegroundTool();
+        }
         ok = gServoMotionController.ensureReady() &&
              gServoMotionController.command(motionAction);
         if (ok) {
@@ -1607,6 +2156,13 @@ static void processPendingAiTool() {
             break;
         case PendingAiTool::SERVO_CONTROL:
             processServoControl(callId);
+            break;
+        case PendingAiTool::DEVICE_STATUS:
+            processDeviceStatus(callId, gPendingAiStringParam);
+            gPendingAiStringParam = "";
+            break;
+        case PendingAiTool::DEVICE_CONTROL:
+            processDeviceControl(callId);
             break;
         default:
             break;
@@ -1776,6 +2332,44 @@ static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst argumen
         return;
     }
 
+    if (toolName == "self.device.status") {
+        String detail = "brief";
+        if (!arguments.isNull()) {
+            detail = arguments["detail"] | "brief";
+        }
+        gPendingAiTool = PendingAiTool::DEVICE_STATUS;
+        gPendingAiCallId = callId;
+        gPendingAiStringParam = detail;
+        return;
+    }
+
+    if (toolName == "self.device.control") {
+        DeviceControlRequest request;
+        if (!arguments.isNull()) {
+            request.page = parseDevicePageArg(arguments["page"] | "");
+
+            String brightnessStr = arguments["brightness"] | "";
+            SystemBrightnessLevel brightness = SystemBrightnessLevel::BRIGHT;
+            if (parseBrightnessArg(brightnessStr, brightness)) {
+                request.hasBrightness = true;
+                request.brightness = brightness;
+            }
+
+            String volumeStr = arguments["volume"] | "";
+            SystemVolumeLevel volume = SystemVolumeLevel::NORMAL;
+            if (parseVolumeArg(volumeStr, volume)) {
+                request.hasVolume = true;
+                request.volume = volume;
+            }
+
+            request.sleep = parseSleepArg(arguments["sleep"] | "");
+        }
+        gPendingDeviceControl = request;
+        gPendingAiTool = PendingAiTool::DEVICE_CONTROL;
+        gPendingAiCallId = callId;
+        return;
+    }
+
     gXiaoZhiClient.queueMcpToolTextResult(callId, "Unknown CoreS3 tool: " + toolName, true);
 }
 
@@ -1810,7 +2404,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                 case GestureType::LONG_PRESS:
                     appState.setState(AppStateEnum::SLEEP);
                     if (takeDisplayLock()) {
-                        gPowerManager.enterSleep();
+                        enterSleepMode();
                         giveDisplayLock();
                     }
                     break;
@@ -2005,7 +2599,12 @@ static void gestureEventHandler(const GestureEvent& event) {
                 }
                 resetServoTestControl();
                 gServoTestTrackingEnabled = true;
-                gServoController.setPanTilt(SERVO_TEST_PAN_CENTER_DEG, SERVO_TEST_TILT_CENTER_DEG);
+                gServoMotionController.ensureReady();
+                gServoMotionController.lookOffset(
+                    static_cast<float>(SERVO_TEST_PAN_CENTER_DEG - SERVO_PAN_CENTER_DEG),
+                    static_cast<float>(SERVO_TEST_TILT_CENTER_DEG - SERVO_TILT_CENTER_DEG),
+                    SERVO_TEST_TRANSITION_SPEED_DPS,
+                    "Servo test center");
                 gServoTestUI.markDirty();
                 Serial.println("Servo Test: center");
                 break;
@@ -2056,7 +2655,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                 case GestureType::DOUBLE_TAP:
                     appState.setState(AppStateEnum::FACE);
                     if (takeDisplayLock()) {
-                        gPowerManager.exitSleep();
+                        wakeFromSleepMode();
                         gFaceUI.wake();
                         giveDisplayLock();
                     }
@@ -2072,7 +2671,7 @@ static void stateChangeHandler(AppStateEnum state) {
     if (state != AppStateEnum::SERVO_TEST) {
         gServoTestReadyForUpdates = false;
         if (gServoTestPageActive) {
-            gServoController.center();
+            gServoMotionController.center(SERVO_SAFE_CENTER_SPEED_DPS);
             gServoTestPageActive = false;
         }
         gServoTestUI.hide();
@@ -2242,6 +2841,9 @@ static void stateChangeHandler(AppStateEnum state) {
             gCameraDebugUI.hide();
             gPomodoroUI.hide();
             gInfoUI.hide();
+            if (gXiaoZhiClient.isAudioChannelOpen()) {
+                gXiaoZhiClient.pauseForForegroundTool();
+            }
             if (gMusicManager.state() == MusicPlaybackState::STOPPED ||
                 gMusicManager.state() == MusicPlaybackState::ERROR ||
                 gMusicManager.trackCount() == 0) {
@@ -2263,8 +2865,14 @@ static void stateChangeHandler(AppStateEnum state) {
             resetServoTestControl();
             bool servoReady = gServoController.begin();
             if (servoReady) {
-                gServoController.setPanTilt(SERVO_TEST_PAN_CENTER_DEG, SERVO_TEST_TILT_CENTER_DEG);
+                gServoMotionController.ensureReady();
+                gServoMotionController.lookOffset(
+                    static_cast<float>(SERVO_TEST_PAN_CENTER_DEG - SERVO_PAN_CENTER_DEG),
+                    static_cast<float>(SERVO_TEST_TILT_CENTER_DEG - SERVO_TILT_CENTER_DEG),
+                    SERVO_TEST_TRANSITION_SPEED_DPS,
+                    "Servo test transition");
             }
+            gServoTestInputEnableAt = millis() + SERVO_TEST_INPUT_ENABLE_DELAY_MS;
             gServoTestUI.show();
             gServoTestUI.setTelemetry(servoReady,
                                       gServoController.statusText(),
@@ -2299,7 +2907,7 @@ static void stateChangeHandler(AppStateEnum state) {
                 M5.Lcd.setTextColor(UiTheme::TEXT_DIM, UiTheme::BG);
                 M5.Lcd.drawString("Tap to wake", DISPLAY_WIDTH / 2, 120);
                 M5.Lcd.setTextDatum(TL_DATUM);
-                M5.Lcd.setBrightness(24);
+                enterSleepMode();
                 giveDisplayLock();
             }
             break;
@@ -2453,7 +3061,7 @@ void setup() {
     cfg.output_power = true;
     M5.begin(cfg);
     displayMutex = xSemaphoreCreateMutex();
-    M5.Lcd.setBrightness(255);
+    applyBrightnessLevel(SystemBrightnessLevel::BRIGHT, true);
     drawLcdDarkBackground();
     M5.Lcd.setTextColor(UiTheme::TEXT, UiTheme::BG);
     M5.Lcd.setTextSize(1);
@@ -2499,6 +3107,7 @@ void setup() {
     bootStep("StorageManager...", 7);
     bool sdOk = gStorageManager.begin();
     gMusicManager.begin(&gStorageManager);
+    applyVolumeLevel(SystemVolumeLevel::NORMAL);
     bootStep(sdOk ? "SD ready" : "SD not found (will retry)", 7);
 
     gAffinityManager.begin();
@@ -2521,7 +3130,7 @@ void setup() {
     gXiaoZhiClient.begin();
     gXiaoZhiClient.setStateCallback(aiStateHandler);
     gXiaoZhiClient.setMcpToolCallback(handleXiaoZhiMcpTool);
-    gXiaoZhiClient.setTranscriptCallback(handleXiaoZhiTranscript);
+    gXiaoZhiClient.setTranscriptCallback(handleXiaoZhiTranscriptModern);
     bootStep("XiaoZhiClient OK", 11);
 
     bootStep("PowerManager...", 12);

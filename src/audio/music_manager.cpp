@@ -3,12 +3,16 @@
 #include <M5CoreS3.h>
 #include <SD.h>
 #include <AudioFileSourceSD.h>
-#include <AudioGeneratorMP3.h>
+#include <AudioFileSourceBuffer.h>
+#include <AudioFileSourceID3.h>
+#include <AudioGeneratorMP3a.h>
 #include <AudioOutput.h>
 #include <cstring>
 
 namespace {
 constexpr int MUSIC_SPEAKER_CHANNEL = 6;
+constexpr uint32_t MUSIC_MP3_FILE_BUFFER_BYTES = 4096;
+uint8_t gMusicRuntimeVolume = MUSIC_SPEAKER_VOLUME;
 
 bool readExact(File& file, void* dst, size_t len) {
     return file.read(static_cast<uint8_t*>(dst), len) == static_cast<int>(len);
@@ -51,7 +55,7 @@ class M5SpeakerAudioOutput : public AudioOutput {
 public:
     M5SpeakerAudioOutput() {
         hertz = 44100;
-        channels = 0;
+        channels = 2;
         bps = 16;
         gainF2P6 = 64;
     }
@@ -79,25 +83,32 @@ public:
     }
 
     bool begin() override {
-        if (!M5.Speaker.isRunning()) {
-            auto cfg = M5.Speaker.config();
-            cfg.sample_rate = hertz > 0 ? hertz : 44100;
-            cfg.stereo = false;
-            cfg.dma_buf_count = 8;
-            cfg.dma_buf_len = 256;
-            cfg.task_priority = 5;
-            M5.Speaker.config(cfg);
-            if (!M5.Speaker.begin()) {
-                Serial.println("Music MP3: speaker begin failed");
-                return false;
-            }
+        if (M5.Speaker.isRunning()) {
+            M5.Speaker.stop(MUSIC_SPEAKER_CHANNEL);
+            M5.Speaker.setVolume(gMusicRuntimeVolume);
+            vTaskDelay(pdMS_TO_TICKS(30));
+            resetBuffers();
+            Serial.printf("Music MP3: output begin (reusing speaker) rate=%u volume=%u\n",
+                          hertz, static_cast<unsigned>(gMusicRuntimeVolume));
+            return true;
         }
-        M5.Speaker.setVolume(MUSIC_SPEAKER_VOLUME);
+        auto cfg = M5.Speaker.config();
+        cfg.sample_rate = hertz > 0 ? hertz : 44100;
+        cfg.stereo = false;
+        cfg.dma_buf_count = 8;
+        cfg.dma_buf_len = 256;
+        cfg.task_priority = 5;
+        M5.Speaker.config(cfg);
+        if (!M5.Speaker.begin()) {
+            Serial.println("Music MP3: speaker begin failed");
+            return false;
+        }
         M5.Speaker.stop(MUSIC_SPEAKER_CHANNEL);
-        frameCount_ = 0;
-        queueFailCount_ = 0;
-        Serial.printf("Music MP3: output begin rate=%u volume=%u\n",
-                      hertz, static_cast<unsigned>(MUSIC_SPEAKER_VOLUME));
+        M5.Speaker.setVolume(gMusicRuntimeVolume);
+        vTaskDelay(pdMS_TO_TICKS(30));
+        resetBuffers();
+        Serial.printf("Music MP3: output begin (fresh) rate=%u volume=%u\n",
+                      hertz, static_cast<unsigned>(gMusicRuntimeVolume));
         return true;
     }
 
@@ -111,7 +122,7 @@ public:
             mixed = (static_cast<int32_t>(sample[LEFTCHANNEL]) +
                      static_cast<int32_t>(sample[RIGHTCHANNEL])) / 2;
         }
-        samples_[frameCount_] = Amplify(static_cast<int16_t>(mixed));
+        buffer_[writeBufferIndex_][frameCount_] = Amplify(static_cast<int16_t>(mixed));
         frameCount_++;
 
         if (frameCount_ >= BUFFER_FRAMES) {
@@ -122,25 +133,66 @@ public:
 
     bool stop() override {
         flushBuffered(true);
-        M5.Speaker.stop(MUSIC_SPEAKER_CHANNEL);
-        frameCount_ = 0;
+        while (queuedBuffers_ > 0 && M5.Speaker.isPlaying(MUSIC_SPEAKER_CHANNEL)) {
+            refreshQueuedBuffers();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        resetBuffers();
         Serial.println("Music MP3: output stopped");
         return true;
     }
 
     void flush() override {
         flushBuffered(true);
+        while (queuedBuffers_ > 0 && M5.Speaker.isPlaying(MUSIC_SPEAKER_CHANNEL)) {
+            refreshQueuedBuffers();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
     }
 
 private:
+    void resetBuffers() {
+        frameCount_ = 0;
+        writeBufferIndex_ = 0;
+        queuedBuffers_ = 0;
+        queueFailCount_ = 0;
+    }
+
+    void refreshQueuedBuffers() {
+        size_t playing = M5.Speaker.isPlaying(MUSIC_SPEAKER_CHANNEL);
+        if (playing > BUFFER_COUNT) playing = BUFFER_COUNT;
+        queuedBuffers_ = static_cast<uint8_t>(playing);
+    }
+
     bool flushBuffered(bool waitForQueue) {
         if (frameCount_ == 0) return true;
+        refreshQueuedBuffers();
         while (true) {
-            bool queued = M5.Speaker.playRaw(samples_, frameCount_, hertz,
+            if (queuedBuffers_ >= MAX_QUEUED_BUFFERS) {
+                queueFailCount_++;
+                if (queueFailCount_ == 1 || (queueFailCount_ % 25) == 0) {
+                    Serial.printf("Music MP3: speaker queue full rate=%u frames=%u wait=%d queued=%u fail=%u\n",
+                                  hertz,
+                                  frameCount_,
+                                  waitForQueue ? 1 : 0,
+                                  queuedBuffers_,
+                                  queueFailCount_);
+                }
+                if (!waitForQueue) {
+                    return false;
+                }
+                vTaskDelay(pdMS_TO_TICKS(5));
+                refreshQueuedBuffers();
+                continue;
+            }
+
+            bool queued = M5.Speaker.playRaw(buffer_[writeBufferIndex_], frameCount_, hertz,
                                             false, 1, MUSIC_SPEAKER_CHANNEL, false);
             if (queued) {
+                writeBufferIndex_ = (writeBufferIndex_ + 1) % BUFFER_COUNT;
                 frameCount_ = 0;
                 queueFailCount_ = 0;
+                refreshQueuedBuffers();
                 return true;
             }
             queueFailCount_++;
@@ -156,8 +208,12 @@ private:
     }
 
     static constexpr uint16_t BUFFER_FRAMES = 576;
-    int16_t samples_[BUFFER_FRAMES] = {};
+    static constexpr uint8_t BUFFER_COUNT = 3;
+    static constexpr uint8_t MAX_QUEUED_BUFFERS = 2;
+    int16_t buffer_[BUFFER_COUNT][BUFFER_FRAMES] = {};
     uint16_t frameCount_ = 0;
+    uint8_t writeBufferIndex_ = 0;
+    uint8_t queuedBuffers_ = 0;
     uint16_t queueFailCount_ = 0;
 };
 }
@@ -256,6 +312,18 @@ MusicPlaybackState MusicManager::state() const {
     return state_;
 }
 
+void MusicManager::setVolumePreset(uint8_t volume) {
+    volumePreset_ = volume;
+    gMusicRuntimeVolume = volume;
+    if (M5.Speaker.isRunning()) {
+        M5.Speaker.setVolume(volumePreset_);
+    }
+}
+
+uint8_t MusicManager::volumePreset() const {
+    return volumePreset_;
+}
+
 bool MusicManager::play(int index) {
     if (trackCount_ == 0 && !scan()) {
         return false;
@@ -308,6 +376,26 @@ bool MusicManager::next() {
     return play(nextIndex);
 }
 
+bool MusicManager::waitForIdle(uint32_t timeoutMs) const {
+    unsigned long deadline = millis() + timeoutMs;
+    while (playbackActive_) {
+        if (timeoutMs != 0 && static_cast<long>(millis() - deadline) >= 0) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return true;
+}
+
+void MusicManager::releaseSpeaker() {
+    M5.Speaker.stop(MUSIC_CHANNEL);
+    M5.Speaker.stop(MUSIC_SPEAKER_CHANNEL);
+    if (M5.Speaker.isRunning()) {
+        M5.Speaker.end();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 void MusicManager::taskThunk(void* arg) {
     static_cast<MusicManager*>(arg)->taskLoop();
 }
@@ -330,12 +418,14 @@ void MusicManager::playFile(int index) {
         return;
     }
 
+    playbackActive_ = true;
     Serial.printf("Music: play file path=%s type=%s\n",
                   trackPaths_[index].c_str(),
                   trackTypes_[index] == TrackType::MP3 ? "MP3" : "WAV");
 
     if (trackTypes_[index] == TrackType::MP3) {
         playMp3File(index);
+        playbackActive_ = false;
         return;
     }
 
@@ -343,10 +433,12 @@ void MusicManager::playFile(int index) {
     if (!file) {
         setStatus("Open failed", MusicPlaybackState::ERROR);
         Serial.printf("Music: open failed path=%s\n", trackPaths_[index].c_str());
+        playbackActive_ = false;
         return;
     }
 
     playWavFile(index, file);
+    playbackActive_ = false;
 }
 
 void MusicManager::playWavFile(int index, File& file) {
@@ -456,6 +548,9 @@ void MusicManager::playMp3File(int index) {
         return;
     }
 
+    M5.Speaker.stop(MUSIC_CHANNEL);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
     AudioFileSourceSD source;
     if (!source.open(trackPaths_[index].c_str())) {
         setStatus("Open failed", MusicPlaybackState::ERROR);
@@ -463,9 +558,11 @@ void MusicManager::playMp3File(int index) {
         return;
     }
 
+    AudioFileSourceID3 taggedSource(&source);
+    AudioFileSourceBuffer bufferedSource(&taggedSource, MUSIC_MP3_FILE_BUFFER_BYTES);
     M5SpeakerAudioOutput output;
-    AudioGeneratorMP3 mp3;
-    if (!mp3.begin(&source, &output)) {
+    AudioGeneratorMP3a mp3;
+    if (!mp3.begin(&bufferedSource, &output)) {
         source.close();
         setStatus("MP3 decode failed", MusicPlaybackState::ERROR);
         Serial.printf("Music MP3: decoder begin failed path=%s\n", trackPaths_[index].c_str());
@@ -572,20 +669,25 @@ bool MusicManager::parseWav(File& file, WavInfo& info, String& error) {
 }
 
 bool MusicManager::beginSpeaker() {
-    if (!M5.Speaker.isRunning()) {
-        auto cfg = M5.Speaker.config();
-        cfg.sample_rate = 48000;
-        cfg.stereo = false;
-        cfg.dma_buf_count = 8;
-        cfg.dma_buf_len = 256;
-        cfg.task_priority = 5;
-        M5.Speaker.config(cfg);
-        if (!M5.Speaker.begin()) {
-            Serial.println("Music: speaker begin failed");
-            return false;
-        }
+    M5.Speaker.stop(MUSIC_CHANNEL);
+    if (M5.Speaker.isRunning()) {
+        M5.Speaker.setVolume(volumePreset_);
+        vTaskDelay(pdMS_TO_TICKS(30));
+        return true;
     }
-    M5.Speaker.setVolume(MUSIC_SPEAKER_VOLUME);
+    auto cfg = M5.Speaker.config();
+    cfg.sample_rate = 44100;
+    cfg.stereo = false;
+    cfg.dma_buf_count = 8;
+    cfg.dma_buf_len = 256;
+    cfg.task_priority = 5;
+    M5.Speaker.config(cfg);
+    if (!M5.Speaker.begin()) {
+        Serial.println("Music: speaker begin failed");
+        return false;
+    }
+    M5.Speaker.setVolume(volumePreset_);
+    vTaskDelay(pdMS_TO_TICKS(30));
     return true;
 }
 

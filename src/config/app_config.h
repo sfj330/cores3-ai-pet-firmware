@@ -119,26 +119,30 @@ constexpr bool SERVO_TILT_INVERT = false;
 constexpr float SERVO_TEST_SWEEP_DEG = 90.0f;
 constexpr float SERVO_TEST_FILTER_ALPHA = 0.18f;
 constexpr float SERVO_TEST_DEADBAND_DEG = 2.0f;
-constexpr float SERVO_TEST_MAX_SPEED_DPS = 90.0f;
+constexpr float SERVO_TEST_MAX_SPEED_DPS = 36.0f;
+constexpr float SERVO_TEST_TRANSITION_SPEED_DPS = 22.0f;
+constexpr unsigned long SERVO_TEST_INPUT_ENABLE_DELAY_MS = 1400;
 constexpr unsigned long SERVO_TEST_UPDATE_MS = 40;
-constexpr float SERVO_FACE_MOTION_SPEED_DPS = 45.0f;
-constexpr float SERVO_TRACKING_MOTION_SPEED_DPS = 35.0f;
+constexpr float SERVO_FACE_MOTION_SPEED_DPS = 28.0f;
+constexpr float SERVO_SAFE_CENTER_SPEED_DPS = 22.0f;
+constexpr float SERVO_TRACKING_MOTION_SPEED_DPS = 28.0f;
 constexpr unsigned long SERVO_MOTION_UPDATE_MS = 40;
 constexpr unsigned long SERVO_MOTION_BEGIN_RETRY_MS = 3000;
 constexpr float SERVO_FACE_PAN_OFFSET_DEG = 24.0f;
 constexpr float SERVO_FACE_TILT_OFFSET_DEG = 18.0f;
 constexpr float SERVO_FACE_SMALL_TILT_DEG = 12.0f;
-constexpr float SERVO_DANCE_MOTION_SPEED_DPS = 75.0f;
-constexpr float SERVO_DANCE_PAN_OFFSET_DEG = 28.0f;
-constexpr float SERVO_DANCE_TILT_UP_DEG = 12.0f;
-constexpr float SERVO_DANCE_TILT_DOWN_DEG = 16.0f;
+constexpr float SERVO_DANCE_MOTION_SPEED_DPS = 36.0f;
+constexpr float SERVO_DANCE_PAN_OFFSET_DEG = 20.0f;
+constexpr float SERVO_DANCE_TILT_UP_DEG = 8.0f;
+constexpr float SERVO_DANCE_TILT_DOWN_DEG = 10.0f;
 constexpr float SERVO_FACE_TRACK_GAIN_DEG = 7.0f;
 constexpr float SERVO_FACE_TRACK_DEADBAND = 0.08f;
 constexpr float SERVO_FACE_TRACK_FILTER_ALPHA = 0.35f;
 constexpr unsigned long SERVO_PHOTO_TRACK_SETTLE_MS = 2000;
 
 // ==================== Music ====================
-constexpr uint8_t MUSIC_SPEAKER_VOLUME = 96;
+constexpr uint8_t MUSIC_SPEAKER_VOLUME = 64;
+constexpr unsigned long DANCE_MUSIC_START_DELAY_MS = 900;
 
 // ==================== Affinity ====================
 constexpr int AFFINITY_DEFAULT_VALUE = 35;

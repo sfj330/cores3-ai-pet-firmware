@@ -6,22 +6,23 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 
 ## Current Status
 
-- Face UI: 11 expressions, blinking, gaze smoothing, temporary gaze overrides, shake-triggered `SICK`, and safe two-axis servo reactions for expression/touch interactions.
+- Face UI: 11 expressions, blinking, gaze smoothing, temporary gaze overrides, shake-triggered `SICK`, and safe two-axis servo reactions for expression and touch interactions.
 - Menu UI: six app icons for Wi-Fi, Camera, Timer, Music, System, and Servo Test pages.
 - Camera Debug: 320 x 240 preview, FPS/status overlay, Back button, JPEG capture to SD, and a real-detector face-centering hook before capture.
+- System page: a shared runtime status snapshot is rendered as five fixed rows for Wi-Fi, SD, Audio, Control, and Memory, with a XiaoZhi and Vision summary in the subtitle.
 - Pomodoro: four presets selected by IMU orientation, screen rotation, timer controls, completion melody, and temporary completion emotion on the face page.
-- Music: scans `/music` on the SD card and plays up to 16 MP3 or PCM WAV files. MP3 output is downmixed to the CoreS3 speaker as mono PCM at the decoder-provided sample rate, with a conservative default volume.
+- Music: scans `/music` on the SD card and plays up to 16 MP3 or PCM WAV files. MP3 output is downmixed to the CoreS3 speaker as mono PCM at the decoder-provided sample rate. Runtime volume uses shared `quiet`, `normal`, and `loud` presets.
 - Servo Test: PCA9685 control through CoreS3 PortA, with IMU X/Y tilt mapped to horizontal and vertical servos in a 10-170 degree test range. The Servo Test neutral pose is pan 90 degrees and tilt 90 degrees.
-- Servo interaction: Face taps, expression changes, XiaoZhi pet reactions, XiaoZhi servo commands, and the dance demo can move/center/release the two-axis head with shared rate limiting. Face and XiaoZhi expression poses keep the mechanical neutral at pan 90 degrees and tilt 140 degrees.
+- Servo interaction: Face taps, expression changes, XiaoZhi pet reactions, XiaoZhi servo commands, and the dance demo can move, center, and release the two-axis head with shared rate limiting. Face and XiaoZhi expression poses keep the mechanical neutral at pan 90 degrees and tilt 140 degrees.
 - Affinity: Face page down swipe opens a memory-only Bond page with level, mood, recent interaction, and a 0-100 score.
-- XiaoZhi AI: OTA activation/config request, TLS WebSocket, Opus microphone upload, Opus TTS playback, and MCP handshake/tool handling.
+- XiaoZhi AI: OTA activation/config request, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake/tool handling, device status query, and device control for page switching, brightness, volume, and sleep/wake.
 - AI Vision: camera preview and image-description requests through the vision endpoint provided by the XiaoZhi service.
 - Face detection: intentionally disabled in this Arduino/PlatformIO build. Photo face tracking has the control framework, but no fake face detector or skin-color detector is active.
 
 ## Hardware
 
 - M5Stack CoreS3, ESP32-S3
-- USB cable for build/upload/serial monitor
+- USB cable for build, upload, and serial monitor
 - MicroSD/TF card formatted as FAT/FAT32 for photos and MP3/WAV music
 - Optional base hardware for battery, PCA9685, and two-axis servos
 
@@ -65,23 +66,17 @@ The project is configured for:
 ```text
 src/
 ├── main.cpp
-├── app/        # State machine, gestures, affinity, event bus
+├── app/        # State machine, gestures, affinity, event bus, shared system status snapshot
 ├── ai/         # XiaoZhi activation, WebSocket, Opus audio, MCP
 ├── audio/      # SD MP3/WAV music player
 ├── config/     # Firmware constants and Wi-Fi secret template
 ├── network/    # Wi-Fi manager and AI vision HTTP client
-├── power/      # Battery/sleep placeholder logic
+├── power/      # Sleep state plus placeholder battery logic
 ├── servo/      # PCA9685 driver and shared servo motion layer
 ├── storage/    # SD card probing, photo paths, file writes
 ├── ui/         # Face, menu, camera, Pomodoro, info, music, affinity UI
 └── vision/     # Camera manager, disabled detector, tracker, IMU orientation
 ```
-
-Additional servo modules:
-
-- `src/servo/servo_controller.*`: PCA9685 driver and safe angle mapping.
-- `src/servo/servo_motion_controller.*`: shared motion targets, rate limiting, expression poses, nod/shake sequences, and PWM release control.
-- `src/vision/face_tracking_controller.*`: converts real `FaceResult` bounding boxes into small pan/tilt corrections for photo centering.
 
 ## Wi-Fi Setup
 
@@ -141,15 +136,16 @@ pio device monitor -p COM5 -b 115200
 
 ## Controls
 
-- Face page: right swipe opens Menu; left swipe or double tap enters XiaoZhi AI; down swipe opens Bond; tap top/bottom/left/right changes expression, gaze, and servo head pose; shaking the device shows `SICK`; long press enters Sleep.
+- Face page: right swipe opens Menu; left swipe or double tap enters XiaoZhi AI; down swipe opens Bond; tap top, bottom, left, or right changes expression, gaze, and servo head pose; shaking the device shows `SICK`; long press enters Sleep.
 - AI page: single tap toggles listening; right swipe or long press returns to Face.
 - Bond page: Back, up swipe, or left swipe returns to Face.
 - Menu page: tap an icon to open Wi-Fi, Camera, Timer, Music, System, or Servo; Back returns to Face.
 - Camera Debug: SHOT saves `/photos/IMG_####.jpg`; if a real face detector backend is available, the firmware briefly tries to center the face with the servos before capture; Back or left swipe returns to Menu.
 - AI Vision: Back or left swipe closes preview and returns to XiaoZhi AI.
-- Pomodoro: rotate the device to select a preset; Start/Pause and Reset control the timer; Back returns to Menu.
+- Pomodoro: rotate the device to select a preset; Start, Pause, and Reset control the timer; Back returns to Menu.
 - Music: Play/Pause, Stop, and Next operate on MP3/WAV files found in `/music`.
-- Servo Test: entering the page centers both servos at 90/90; tilt CoreS3 left/right for the horizontal servo and forward/back for the vertical servo; tap to re-center at 90/90; long press releases PWM; Back or left swipe returns to Menu and restores the Face/XiaoZhi 90/140 center.
+- System: shows Wi-Fi, SD, Audio, Control, and Memory rows; the subtitle summarizes XiaoZhi and Vision readiness; Back returns to Menu.
+- Servo Test: entering the page centers both servos at 90/90; tilt CoreS3 left and right for the horizontal servo and forward and back for the vertical servo; tap to re-center at 90/90; long press releases PWM; Back or left swipe returns to Menu and restores the Face/XiaoZhi 90/140 center.
 
 ## SD Card Content
 
@@ -161,7 +157,7 @@ The firmware creates and uses:
 /music/*.wav
 ```
 
-Music playback currently supports MP3 files plus PCM WAV files with 8-bit or 16-bit samples and one or two channels. MP3 stereo/mono output is mixed to mono before it is queued to the built-in speaker. The first 16 audio files are scanned and sorted by filename.
+Music playback currently supports MP3 files plus PCM WAV files with 8-bit or 16-bit samples and one or two channels. MP3 stereo or mono output is mixed to mono before it is queued to the built-in speaker. The first 16 audio files are scanned and sorted by filename.
 
 ## XiaoZhi AI
 
@@ -171,7 +167,7 @@ The flow is:
 
 1. Enter the AI page from the Face page.
 2. Wait for Wi-Fi, then send an OTA request to get activation/config data.
-3. Open a TLS WebSocket using the returned URL/token.
+3. Open a TLS WebSocket using the returned URL and token.
 4. Send a `hello` message with Opus audio parameters and MCP enabled.
 5. Reply to MCP bootstrap requests.
 6. Start listening after MCP is ready.
@@ -195,22 +191,31 @@ self.pomodoro.open
 self.music.control
 self.pet.react
 self.servo.control
+self.device.status
+self.device.control
 ```
 
 AI Vision depends on the vision endpoint and token delivered by the XiaoZhi service. It is not a local embedded face detector.
 
-`self.servo.control` accepts `action` values `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, `dance`, and `release`. Transcript fallback also recognizes common Chinese phrases such as looking left/right/up/down, returning to center, nodding, shaking the head, dancing, and releasing servos. The dance action starts servo motion first, then tries to use `/music` if available; music or SD failure does not cancel the servo dance.
+`self.servo.control` accepts `action` values `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, `dance`, and `release`. Transcript fallback also recognizes common Chinese phrases such as looking left, right, up, and down, returning to center, nodding, shaking the head, dancing, and releasing servos. The dance action starts servo motion first, then tries to use `/music` if available; music or SD failure does not cancel the servo dance.
+
+`self.device.status` accepts `detail=brief|full`. `brief` returns two short Chinese sentences covering Wi-Fi and SD first, then Music, AI, and Vision. `full` appends heap and PSRAM information.
+
+`self.device.control` supports optional `page`, `brightness`, `volume`, and `sleep` fields. Supported pages are `face`, `menu`, `wifi`, `system`, `camera`, `music`, `pomodoro`, and `ai`. Brightness presets are `dim`, `normal`, and `bright`. Volume presets are `quiet`, `normal`, and `loud`. Sleep supports `wake` and `sleep`. Wake restores the last non-sleep brightness preference instead of hard-coding full brightness.
+
+Transcript fallback also recognizes common Chinese commands for status query, opening the System, Music, Camera, and Pomodoro pages, returning to the home page, adjusting brightness, adjusting volume, and sleep/wake requests.
 
 ## Known Limitations
 
-- Real face detection is disabled. The current entry point is `src/vision/face_detector.*`, where `FaceDetector::backendAvailable()` returns false and `detect()` returns no boxes. ESP-DL/ESP-WHO integration still needs a verified ESP-IDF or Arduino-as-IDF-component path.
+- Real face detection is disabled. The current entry point is `src/vision/face_detector.*`, where `FaceDetector::backendAvailable()` returns false and `detect()` returns no boxes. ESP-DL or ESP-WHO integration still needs a verified ESP-IDF or Arduino-as-IDF-component path.
 - Photo face tracking only becomes closed-loop when `FaceDetector::detect()` returns real face boxes; the current Arduino build reports face tracking unavailable and still saves photos normally.
 - AI Vision requires a XiaoZhi-provided vision endpoint.
 - CoreS3 built-in microphone and speaker are half-duplex; full-duplex interruption and echo cancellation are not implemented.
-- Battery voltage reading is still a placeholder until the final PMU API/hardware path is validated.
+- Battery voltage reading is still a placeholder until the final PMU API and hardware path is validated.
+- Brightness and volume presets are runtime-only and reset to `bright` plus `normal` after reboot.
 - SD card behavior depends on card format, contact, and power stability. The firmware retries SD init at 25, 10, 4, and 1 MHz.
-- Servo expression/XiaoZhi control is open-loop pose control with rate limiting. It is not PID gimbal control or autonomous base motion.
-- Bond/affinity is memory-only in this version and resets to 35 after reboot.
+- Servo expression and XiaoZhi control are open-loop pose control with rate limiting. They are not PID gimbal control or autonomous base motion.
+- Bond and affinity are memory-only in this version and reset to 35 after reboot.
 
 ## Troubleshooting
 
@@ -222,5 +227,5 @@ AI Vision depends on the vision endpoint and token delivered by the XiaoZhi serv
 - AI Vision says endpoint missing: the XiaoZhi session did not provide vision capability data.
 - SD not found: format the card as FAT/FAT32 and check logs for `SD.begin failed`, `CARD_NONE`, `Root open failed`, or `Probe write failed`.
 - Servo page says `PCA9685 not found @0x40`: check PortA wiring, PCA9685 address jumpers, external servo power, and common ground.
-- PCA9685 LED briefly turns off or servos buzz under fast two-axis motion: use a stronger external servo supply, shorten/thicken power wiring, verify common ground, and avoid mechanical end stops.
-- MP3 is silent or the board resets a few seconds after playback starts: check serial logs for the track path, MP3 sample rate/channel report, and speaker queue failures. If the next boot reports `BROWNOUT` or `POWERON`, treat it as a power drop; if it reports `WDT` or `PANIC`, continue with software crash diagnosis.
+- PCA9685 LED briefly turns off or servos buzz under fast two-axis motion: use a stronger external servo supply, shorten or thicken power wiring, verify common ground, and avoid mechanical end stops.
+- MP3 is silent or the board resets a few seconds after playback starts: check serial logs for the track path, MP3 sample rate and channel report, and speaker queue failures. If the next boot reports `BROWNOUT` or `POWERON`, treat it as a power drop; if it reports `WDT` or `PANIC`, continue with software crash diagnosis.

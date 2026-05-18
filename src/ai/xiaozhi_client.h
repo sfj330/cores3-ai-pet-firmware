@@ -36,6 +36,8 @@ public:
     bool hasVisionEndpoint() const;
     bool isPreparingListening() const;
     bool isListeningStarted() const;
+    void setTtsVolume(uint8_t volume);
+    uint8_t ttsVolume() const;
 
     bool startListening();
     bool stopListening();
@@ -80,6 +82,10 @@ private:
     void stopMic();
     bool startSpeaker();
     void stopSpeaker();
+    void resetPlaybackQueueState();
+    void refreshPlaybackQueueState();
+    bool waitForSpeakerQueueRoom(uint32_t timeoutMs);
+    bool queueSpeakerSamples(const int16_t* samples, size_t sampleCount);
     void audioCaptureTask();
     bool sendAudioFrame(const int16_t* pcmData, size_t sampleCount);
     void sendListenStart();
@@ -110,6 +116,7 @@ private:
     bool openingAudioChannel_ = false;
     bool micActive_ = false;
     bool speakerActive_ = false;
+    bool foregroundPaused_ = false;
     bool listenRequested_ = false;
     bool listenStarted_ = false;
     bool mcpReady_ = false;
@@ -148,10 +155,13 @@ private:
     int protocolVersion_ = 1;
     int serverSampleRate_ = 24000;
     int serverFrameDuration_ = 60;
+    uint8_t ttsVolume_ = 160;
 
     int16_t* pcmCaptureBuf_ = nullptr;
     int16_t* pcmPlaybackBufs_[PLAYBACK_BUFFER_COUNT] = {};
     size_t playbackBufferIndex_ = 0;
+    uint8_t playbackQueuedBuffers_ = 0;
+    uint16_t playbackQueueFailCount_ = 0;
     uint8_t* opusEncodeBuf_ = nullptr;
     OpusEncoder* opusEncoder_ = nullptr;
     OpusDecoder* opusDecoder_ = nullptr;

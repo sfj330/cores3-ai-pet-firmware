@@ -72,5 +72,8 @@ void PowerManager::enterSleep() {
 
 void PowerManager::exitSleep() {
     sleeping_ = false;
-    M5.Lcd.setBrightness(255);
+}
+
+bool PowerManager::isSleeping() const {
+    return sleeping_;
 }

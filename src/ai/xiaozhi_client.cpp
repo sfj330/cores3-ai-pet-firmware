@@ -11,6 +11,8 @@
 
 namespace {
 constexpr bool XIAOZHI_VERBOSE_WS_LOG = false;
+constexpr uint8_t XIAOZHI_SPEAKER_CHANNEL = 0;
+constexpr uint8_t XIAOZHI_MAX_QUEUED_BUFFERS = 2;
 }
 
 XiaoZhiClient::XiaoZhiClient() = default;
@@ -248,6 +250,17 @@ bool XiaoZhiClient::isListeningStarted() const {
     return listenStarted_ && audioCaptureRunning_ && micActive_ && wsConnected_;
 }
 
+void XiaoZhiClient::setTtsVolume(uint8_t volume) {
+    ttsVolume_ = volume;
+    if (speakerActive_ || M5.Speaker.isRunning()) {
+        M5.Speaker.setVolume(ttsVolume_);
+    }
+}
+
+uint8_t XiaoZhiClient::ttsVolume() const {
+    return ttsVolume_;
+}
+
 String XiaoZhiClient::getHelloMessage() {
     JsonDocument doc;
     doc["type"] = "hello";
@@ -401,6 +414,7 @@ void XiaoZhiClient::closeAudioChannel() {
     audioCaptureRunning_ = false;
     audioChannelOpen_ = false;
     openingAudioChannel_ = false;
+    foregroundPaused_ = false;
     listenRequested_ = false;
     listenStarted_ = false;
     mcpReady_ = false;
@@ -430,6 +444,7 @@ void XiaoZhiClient::closeAudioChannel() {
 }
 
 void XiaoZhiClient::pauseForForegroundTool() {
+    foregroundPaused_ = true;
     audioCaptureRunning_ = false;
     listenRequested_ = false;
     listenStarted_ = false;
@@ -440,11 +455,13 @@ void XiaoZhiClient::pauseForForegroundTool() {
     if (opusTxQueue_) {
         xQueueReset(opusTxQueue_);
     }
+    resetPlaybackQueueState();
     setState(VoiceState::IDLE);
     Serial.println("XiaoZhi: paused for foreground tool");
 }
 
 void XiaoZhiClient::resumeFromForegroundTool() {
+    foregroundPaused_ = false;
     if (!audioChannelOpen_ || !wsConnected_) {
         Serial.println("XiaoZhi: cannot resume, channel not open");
         setState(VoiceState::IDLE);
@@ -519,6 +536,7 @@ void XiaoZhiClient::handleTextMessage(const char* data, size_t len) {
             if (opusTxQueue_) {
                 xQueueReset(opusTxQueue_);
             }
+            resetPlaybackQueueState();
             startSpeaker();
             setState(VoiceState::SPEAKING);
         } else if (st == "stop") {
@@ -787,6 +805,66 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
         actionEnum.add("release");
     }
 
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.device.status";
+        t["description"] = "Query the current CoreS3 device status including Wi-Fi, SD, music, AI, vision, and memory.";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+        JsonObject detail = p["detail"].to<JsonObject>();
+        detail["type"] = "string";
+        detail["description"] = "brief returns 2 short Chinese sentences; full adds heap and PSRAM.";
+        JsonArray detailEnum = detail["enum"].to<JsonArray>();
+        detailEnum.add("brief");
+        detailEnum.add("full");
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.device.control";
+        t["description"] = "Control the CoreS3 page, brightness preset, volume preset, or sleep and wake behavior.";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+
+        JsonObject page = p["page"].to<JsonObject>();
+        page["type"] = "string";
+        page["description"] = "Page target: face, menu, wifi, system, camera, music, pomodoro, ai";
+        JsonArray pageEnum = page["enum"].to<JsonArray>();
+        pageEnum.add("face");
+        pageEnum.add("menu");
+        pageEnum.add("wifi");
+        pageEnum.add("system");
+        pageEnum.add("camera");
+        pageEnum.add("music");
+        pageEnum.add("pomodoro");
+        pageEnum.add("ai");
+
+        JsonObject brightness = p["brightness"].to<JsonObject>();
+        brightness["type"] = "string";
+        brightness["description"] = "Brightness preset: dim, normal, bright";
+        JsonArray brightnessEnum = brightness["enum"].to<JsonArray>();
+        brightnessEnum.add("dim");
+        brightnessEnum.add("normal");
+        brightnessEnum.add("bright");
+
+        JsonObject volume = p["volume"].to<JsonObject>();
+        volume["type"] = "string";
+        volume["description"] = "Volume preset: quiet, normal, loud";
+        JsonArray volumeEnum = volume["enum"].to<JsonArray>();
+        volumeEnum.add("quiet");
+        volumeEnum.add("normal");
+        volumeEnum.add("loud");
+
+        JsonObject sleep = p["sleep"].to<JsonObject>();
+        sleep["type"] = "string";
+        sleep["description"] = "Sleep control: wake or sleep";
+        JsonArray sleepEnum = sleep["enum"].to<JsonArray>();
+        sleepEnum.add("wake");
+        sleepEnum.add("sleep");
+    }
+
     String resultJson;
     serializeJson(result, resultJson);
     sendMcpResult(id, resultJson);
@@ -814,14 +892,24 @@ void XiaoZhiClient::parseMcpInitializeParams(JsonObjectConst params) {
 }
 
 void XiaoZhiClient::handleBinaryMessage(const uint8_t* data, size_t len) {
-    if (!opusReady_ || !opusDecoder_ || len == 0) return;
+    if (foregroundPaused_ || !opusReady_ || !opusDecoder_ || len == 0) return;
     if (!speakerActive_ && !startSpeaker()) {
+        return;
+    }
+    if (!waitForSpeakerQueueRoom(200)) {
+        playbackQueueFailCount_++;
+        if (playbackQueueFailCount_ == 1 || (playbackQueueFailCount_ % 25) == 0) {
+            Serial.printf("XiaoZhi: speaker queue timeout rate=%d len=%u queued=%u fail=%u\n",
+                          serverSampleRate_,
+                          static_cast<unsigned>(len),
+                          playbackQueuedBuffers_,
+                          playbackQueueFailCount_);
+        }
         return;
     }
 
     int16_t* playbackBuf = pcmPlaybackBufs_[playbackBufferIndex_];
     if (!playbackBuf) return;
-    playbackBufferIndex_ = (playbackBufferIndex_ + 1) % PLAYBACK_BUFFER_COUNT;
 
     int decodedSamples = opus_decode(opusDecoder_, data, len, playbackBuf, OPUS_MAX_DECODE_SAMPLES, 0);
     if (decodedSamples <= 0) {
@@ -829,7 +917,17 @@ void XiaoZhiClient::handleBinaryMessage(const uint8_t* data, size_t len) {
         return;
     }
 
-    M5.Speaker.playRaw(playbackBuf, decodedSamples, serverSampleRate_, false, 1, 0, false);
+    if (!queueSpeakerSamples(playbackBuf, static_cast<size_t>(decodedSamples))) {
+        if (playbackQueueFailCount_ == 1 || (playbackQueueFailCount_ % 25) == 0) {
+            Serial.printf("XiaoZhi: speaker queue busy rate=%d samples=%u queued=%u fail=%u\n",
+                          serverSampleRate_,
+                          static_cast<unsigned>(decodedSamples),
+                          playbackQueuedBuffers_,
+                          playbackQueueFailCount_);
+        }
+        return;
+    }
+    playbackBufferIndex_ = (playbackBufferIndex_ + 1) % PLAYBACK_BUFFER_COUNT;
 }
 
 void XiaoZhiClient::parseServerHello(const char* data, size_t len) {
@@ -910,6 +1008,8 @@ bool XiaoZhiClient::startMic() {
     if (!micActive_) {
         Serial.println("XiaoZhi: mic begin failed");
         lastError_ = "Mic begin failed";
+    } else {
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
     return micActive_;
 }
@@ -922,15 +1022,19 @@ void XiaoZhiClient::stopMic() {
         vTaskDelay(pdMS_TO_TICKS(5));
     }
     M5.Mic.end();
+    vTaskDelay(pdMS_TO_TICKS(20));
     micActive_ = false;
 }
 
 bool XiaoZhiClient::startSpeaker() {
-    if (speakerActive_ && M5.Speaker.isRunning()) return true;
-
     stopMic();
+    if (M5.Speaker.isRunning()) {
+        M5.Speaker.end();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
     auto spk_cfg = M5.Speaker.config();
-    spk_cfg.sample_rate = 48000;
+    spk_cfg.sample_rate = serverSampleRate_ > 0 ? serverSampleRate_ : 24000;
     spk_cfg.stereo = false;
     spk_cfg.dma_buf_count = 8;
     spk_cfg.dma_buf_len = 256;
@@ -938,7 +1042,11 @@ bool XiaoZhiClient::startSpeaker() {
     M5.Speaker.config(spk_cfg);
     speakerActive_ = M5.Speaker.begin();
     if (speakerActive_) {
-        M5.Speaker.setVolume(160);
+        resetPlaybackQueueState();
+        M5.Speaker.setAllChannelVolume(255);
+        M5.Speaker.setChannelVolume(XIAOZHI_SPEAKER_CHANNEL, 255);
+        M5.Speaker.setVolume(ttsVolume_);
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
     if (!speakerActive_) {
         Serial.println("XiaoZhi: speaker begin failed");
@@ -949,8 +1057,60 @@ bool XiaoZhiClient::startSpeaker() {
 
 void XiaoZhiClient::stopSpeaker() {
     if (!speakerActive_ && !M5.Speaker.isRunning()) return;
+    M5.Speaker.stop(XIAOZHI_SPEAKER_CHANNEL);
     M5.Speaker.end();
+    vTaskDelay(pdMS_TO_TICKS(20));
     speakerActive_ = false;
+    resetPlaybackQueueState();
+}
+
+void XiaoZhiClient::resetPlaybackQueueState() {
+    playbackBufferIndex_ = 0;
+    playbackQueuedBuffers_ = 0;
+    playbackQueueFailCount_ = 0;
+}
+
+void XiaoZhiClient::refreshPlaybackQueueState() {
+    size_t playing = M5.Speaker.isPlaying(XIAOZHI_SPEAKER_CHANNEL);
+    if (playing > PLAYBACK_BUFFER_COUNT) {
+        playing = PLAYBACK_BUFFER_COUNT;
+    }
+    playbackQueuedBuffers_ = static_cast<uint8_t>(playing);
+}
+
+bool XiaoZhiClient::waitForSpeakerQueueRoom(uint32_t timeoutMs) {
+    unsigned long deadline = millis() + timeoutMs;
+    while (true) {
+        refreshPlaybackQueueState();
+        if (playbackQueuedBuffers_ < XIAOZHI_MAX_QUEUED_BUFFERS) {
+            return true;
+        }
+        if (timeoutMs != 0 && static_cast<long>(millis() - deadline) >= 0) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+bool XiaoZhiClient::queueSpeakerSamples(const int16_t* samples, size_t sampleCount) {
+    if (!samples || sampleCount == 0) {
+        return true;
+    }
+    refreshPlaybackQueueState();
+    if (playbackQueuedBuffers_ >= XIAOZHI_MAX_QUEUED_BUFFERS) {
+        playbackQueueFailCount_++;
+        return false;
+    }
+    bool queued = M5.Speaker.playRaw(samples, sampleCount, serverSampleRate_, false, 1,
+                                     XIAOZHI_SPEAKER_CHANNEL, false);
+    if (!queued) {
+        playbackQueueFailCount_++;
+        refreshPlaybackQueueState();
+        return false;
+    }
+    playbackQueueFailCount_ = 0;
+    refreshPlaybackQueueState();
+    return true;
 }
 
 bool XiaoZhiClient::initOpusCodec() {
@@ -1091,7 +1251,7 @@ bool XiaoZhiClient::stopListening() {
 }
 
 bool XiaoZhiClient::tryStartListeningStream() {
-    if (!listenRequested_ || listenStarted_ || !audioChannelOpen_ || !mcpReady_ || !wsConnected_) {
+    if (foregroundPaused_ || !listenRequested_ || listenStarted_ || !audioChannelOpen_ || !mcpReady_ || !wsConnected_) {
         return false;
     }
     if (!micActive_ && !startMic()) {

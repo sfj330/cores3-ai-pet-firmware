@@ -27,6 +27,7 @@ public:
     // Trigger low-power sleep
     void enterSleep();
     void exitSleep();
+    bool isSleeping() const;
 
 private:
     float readVoltage();

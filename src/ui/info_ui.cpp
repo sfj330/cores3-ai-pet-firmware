@@ -40,17 +40,9 @@ void InfoUI::setWifiStatus(const char* status, const char* ip, int rssi, bool co
     }
 }
 
-void InfoUI::setSystemStatus(float voltage, float percentage, bool lowBattery,
-                             uint32_t heapKb, uint32_t psramKb, const char* visionStatus) {
-    String newVision = visionStatus ? String(visionStatus) : String();
-    if (voltage != voltage_ || percentage != percentage_ || lowBattery != lowBattery_ ||
-        heapKb != heapKb_ || psramKb != psramKb_ || newVision != visionStatus_) {
-        voltage_ = voltage;
-        percentage_ = percentage;
-        lowBattery_ = lowBattery;
-        heapKb_ = heapKb;
-        psramKb_ = psramKb;
-        visionStatus_ = newVision;
+void InfoUI::setSystemStatus(const SystemStatusViewModel& status) {
+    if (!systemStatusEquals(systemStatus_, status)) {
+        systemStatus_ = status;
         dirty_ = true;
     }
 }
@@ -94,7 +86,9 @@ void InfoUI::drawWifiPage() {
 }
 
 void InfoUI::drawSystemPage() {
-    UiTheme::drawTitle(canvas_, "System", "Device status", UiTheme::GREEN);
+    String subtitle = String("XiaoZhi ") + systemStatusXiaoZhiSummary(systemStatus_) +
+                      " / Vision " + systemStatusVisionSummary(systemStatus_);
+    UiTheme::drawTitle(canvas_, "System", subtitle.c_str(), UiTheme::GREEN);
 
     canvas_.fillRoundRect(22, 54, 72, 72, 16, UiTheme::GREEN);
     canvas_.drawRoundRect(22, 54, 72, 72, 16, UiTheme::TEXT);
@@ -109,17 +103,17 @@ void InfoUI::drawSystemPage() {
         canvas_.drawLine(x1, y1, x2, y2, UiTheme::BG);
     }
 
-    drawRow(112, 52, "Battery", voltage_ > 0.1f ? String(voltage_, 2) + " V" : String("Unknown"), lowBattery_ ? UiTheme::RED : UiTheme::GREEN);
-    drawRow(112, 80, "Charge", voltage_ > 0.1f ? String(static_cast<int>(percentage_ * 100.0f)) + "%" : String("--"), UiTheme::CYAN);
-    drawRow(112, 108, "Heap", String(heapKb_) + " KB", UiTheme::AMBER);
-    drawRow(112, 136, "PSRAM", String(psramKb_) + " KB", UiTheme::BLUE);
-    drawRow(112, 164, "Vision", visionStatus_, UiTheme::TEXT_DIM);
+    drawRow(104, 48, "Wi-Fi", systemStatusWifiLine(systemStatus_), UiTheme::CYAN);
+    drawRow(104, 76, "SD", systemStatusSdLine(systemStatus_), systemStatus_.sd.ready ? UiTheme::GREEN : UiTheme::AMBER);
+    drawRow(104, 104, "Audio", systemStatusAudioLine(systemStatus_), UiTheme::AMBER);
+    drawRow(104, 132, "Control", systemStatusControlLine(systemStatus_), UiTheme::BLUE);
+    drawRow(104, 160, "Memory", systemStatusMemoryLine(systemStatus_), UiTheme::TEXT_DIM);
 }
 
 void InfoUI::drawRow(int x, int y, const char* label, const String& value, uint16_t accent) {
     String displayValue = value;
-    if (displayValue.length() > 17) {
-        displayValue = displayValue.substring(0, 14) + "...";
+    if (displayValue.length() > 20) {
+        displayValue = displayValue.substring(0, 17) + "...";
     }
     canvas_.fillRoundRect(x, y, DISPLAY_WIDTH - x - 18, 22, 6, UiTheme::PANEL);
     canvas_.drawFastVLine(x + 6, y + 5, 12, accent);
@@ -129,7 +123,7 @@ void InfoUI::drawRow(int x, int y, const char* label, const String& value, uint1
     canvas_.setCursor(x + 14, y + 7);
     canvas_.print(label);
     canvas_.setTextColor(UiTheme::TEXT, UiTheme::PANEL);
-    canvas_.setCursor(x + 76, y + 7);
+    canvas_.setCursor(x + 62, y + 7);
     canvas_.print(displayValue);
 }
 
