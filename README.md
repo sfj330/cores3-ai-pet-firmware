@@ -1,8 +1,10 @@
-# CoreS3 AI Desktop Pet
+# CoreS3 AI Pet Firmware
 
 Firmware for a M5Stack CoreS3 desktop pet demo. It combines an animated face, touch and IMU interaction, Wi-Fi status, camera preview and photo capture, Pomodoro, SD music playback, XiaoZhi voice interaction, and AI Vision requests exposed through XiaoZhi MCP tools.
 
 Chinese documentation is available in [README_CN.md](README_CN.md).
+
+Recommended GitHub repository name: `cores3-ai-pet-firmware`.
 
 ## Current Status
 
@@ -66,6 +68,7 @@ The project is configured for:
 ## Repository Layout
 
 ```text
+docs/        # Learning guide, architecture notes, troubleshooting
 src/
 |- main.cpp
 |- app/        # State machine, gestures, affinity, event bus, shared status snapshot
@@ -79,6 +82,14 @@ src/
 |- ui/         # Face, menu, camera, Pomodoro, system, music, affinity, settings UI
 `- vision/     # Camera manager, heuristic face detector, tracker, IMU orientation
 ```
+
+## Learning Path
+
+If you are reading this project to learn embedded application design on CoreS3, start here:
+
+- [docs/README.md](docs/README.md): suggested reading order.
+- [docs/architecture.md](docs/architecture.md): state machine, task model, and module boundaries.
+- [docs/troubleshooting.md](docs/troubleshooting.md): common camera, power, SD, and servo issues.
 
 ## Wi-Fi Setup
 

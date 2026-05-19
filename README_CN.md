@@ -1,8 +1,10 @@
-# CoreS3 AI 桌面宠物
+# CoreS3 AI 桌宠固件
 
 这是一个基于 M5Stack CoreS3 的桌面宠物演示固件。当前版本整合了表情脸、触摸与 IMU 交互、Wi-Fi 状态、相机预览与拍照、番茄钟、SD 音乐播放、小智语音交互，以及通过 XiaoZhi MCP 工具触发的 AI Vision 请求。
 
 英文说明见 [README.md](README.md)。
+
+建议的 GitHub 仓库名：`cores3-ai-pet-firmware`。
 
 ## 当前状态
 
@@ -66,6 +68,7 @@ CS   4
 ## 目录结构
 
 ```text
+docs/        # 学习导览、架构说明、故障排查
 src/
 |- main.cpp
 |- app/        # 状态机、手势、好感、事件总线、共享系统状态快照
@@ -79,6 +82,14 @@ src/
 |- ui/         # 表情、菜单、相机、番茄钟、系统、音乐、好感、设置 UI
 `- vision/     # 相机管理、启发式人脸检测、追踪器、IMU 方向
 ```
+
+## 学习路径
+
+如果你想通过这个项目学习 CoreS3 嵌入式应用设计，建议按这个顺序阅读：
+
+- [docs/README_CN.md](docs/README_CN.md)：学习导览和阅读顺序。
+- [docs/architecture_CN.md](docs/architecture_CN.md)：状态机、任务模型和模块边界。
+- [docs/troubleshooting_CN.md](docs/troubleshooting_CN.md)：相机、电源、SD、舵机等常见问题排查。
 
 ## Wi-Fi 配置
 

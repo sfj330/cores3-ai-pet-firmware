@@ -1,0 +1,30 @@
+# 学习导览
+
+这个仓库是一套完整的 CoreS3 桌宠固件。不要一开始就从 `main.cpp` 硬啃，按层次读会轻松很多。
+
+## 推荐阅读顺序
+
+1. 先读根目录 `README_CN.md`，了解当前固件已经实现了什么。
+2. 读 `src/config/app_config.h`，熟悉主要硬件引脚、时间常量、任务优先级和安全限速。
+3. 读 `src/app/app_state.h` 和 `src/main.cpp` 里的状态切换，理解页面如何跳转。
+4. 读 `src/ui/` 下的 UI 类，建议从 `face_ui.*`、`menu_ui.*`、`camera_debug_ui.*` 开始。
+5. 改相机前先读 `src/vision/camera_manager.*`，重点理解帧缓冲释放和 CoreS3 内部 I2C 处理。
+6. 理解本地 UI 后再读 `src/ai/xiaozhi_client.*`，因为小智语音、WebSocket、Opus、MCP 是最重的子系统。
+7. 改舵机前先读 `src/servo/servo_motion_controller.*`，直接大角度跳转容易触发掉电重启。
+
+## 适合新手的实验
+
+- 改一个表情颜色或嘴型。
+- 给某个页面加一句状态提示。
+- 给菜单或系统页加一行说明。
+- 在 `src/config/app_config.h` 里微调舵机速度，然后用外部舵机电源实测。
+- 给某个状态切换加串口日志，用 115200 波特率观察流程。
+
+## 建议保留的工程习惯
+
+- UI 绘制尽量留在 UI 类里，优先用 `M5Canvas` 一次推送完整画面。
+- 相机 framebuffer 用完必须释放，不要释放后继续访问。
+- 不要在触摸/状态切换回调里做相机、Wi-Fi、AI 等重活。
+- 把相机、扬声器、麦克风、SD、舵机都当作共享资源来管理。
+- 优先写短小的状态驱动逻辑，不要在 `loop()` 里塞长阻塞流程。
+- 真实 Wi-Fi 凭据只放在已忽略的 `src/config/wifi_secrets.h`。

@@ -4,6 +4,7 @@ This repository uses the same working guidance for Claude Code and Codex. Treat 
 
 Important current facts:
 
+- The public project name is `CoreS3 AI Pet Firmware`; the recommended GitHub repository slug is `cores3-ai-pet-firmware`.
 - This is active M5Stack CoreS3 / ESP32-S3 firmware using PlatformIO Arduino, not a planning-only project.
 - Implemented pages are Face, Menu, Wi-Fi Info, Camera Debug, AI Vision, Pomodoro, Music, System Info, Bond, Settings, AI, and Sleep. Servo Test has been removed.
 - XiaoZhi voice integration is real in this firmware path: OTA/config request, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP bootstrap, and selected MCP tools are implemented.

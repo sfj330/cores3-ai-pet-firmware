@@ -4,7 +4,7 @@ This file provides guidance to Codex/Coding agents when working with this reposi
 
 ## Project Overview
 
-**CoreS3 AI Desktop Pet Interaction System** is active embedded firmware for M5Stack CoreS3 / ESP32-S3. It is used as a National College Embedded Competition desktop pet demo. The CoreS3 acts as the pet head/brain, with optional base hardware for battery, PCA9685 servo control, and two-axis movement.
+**CoreS3 AI Pet Firmware** is active embedded firmware for M5Stack CoreS3 / ESP32-S3. It is used as a National College Embedded Competition desktop pet demo. The CoreS3 acts as the pet head/brain, with optional base hardware for battery, PCA9685 servo control, and two-axis movement.
 
 The current design separates the face UI from camera/AI backends: the screen renders the pet expression, while camera preview, AI voice, AI vision, storage, power, and timer features run as state-driven modules.
 
@@ -56,6 +56,13 @@ Removed or intentionally not implemented:
 ## Code Structure
 
 ```text
+docs/
+|- README.md
+|- README_CN.md
+|- architecture.md
+|- architecture_CN.md
+|- troubleshooting.md
+`- troubleshooting_CN.md
 src/
 |- main.cpp
 |- app/
