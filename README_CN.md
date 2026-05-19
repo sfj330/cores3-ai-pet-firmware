@@ -4,7 +4,6 @@
 
 英文说明见 [README.md](README.md)。
 
-建议的 GitHub 仓库名：`cores3-ai-pet-firmware`。
 
 ## 当前状态
 

@@ -4,7 +4,6 @@ Firmware for a M5Stack CoreS3 desktop pet demo. It combines an animated face, to
 
 Chinese documentation is available in [README_CN.md](README_CN.md).
 
-Recommended GitHub repository name: `cores3-ai-pet-firmware`.
 
 ## Current Status
 
