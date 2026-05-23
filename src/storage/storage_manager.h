@@ -13,6 +13,7 @@ public:
 
     String nextPhotoPath();
     bool writeFile(const char* path, const uint8_t* data, size_t len);
+    bool deleteFile(const char* path);
     String statusText() const;
 
 private:

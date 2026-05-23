@@ -77,6 +77,8 @@ Check:
 
 The firmware retries SD init at 25, 10, 4, and 1 MHz.
 
+If the Album page or web photo list looks empty even though the card is mounted, check that files are standard `.jpg` or `.JPG` names under `/photos`.
+
 ## No AI Reply
 
 Check serial logs for this sequence:
@@ -92,3 +94,16 @@ tts
 ```
 
 If AI Vision says endpoint missing, the current XiaoZhi session did not provide a vision URL/token.
+
+If TTS playback cuts off during foreground camera, music, or page tool actions, check for `pauseForForegroundTool` flow and `speaker queue timeout` logs. Recent code changes increase queue wait time and drop decoded playback when foreground pause is active to reduce audio contention.
+
+## Web Control Page Not Reachable
+
+Check:
+
+- Wi-Fi is connected and the Wi-Fi page shows a valid device IP.
+- Serial logs include `WebServer: started on port 80`.
+- Your phone or PC is on the same LAN as the CoreS3.
+- Another service is not already bound to port `80`.
+
+If Wi-Fi disconnects, the firmware stops the web server automatically and restarts it after reconnect.

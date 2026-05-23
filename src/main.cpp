@@ -1,4 +1,5 @@
 #include <M5CoreS3.h>
+#include <SD.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -19,6 +20,7 @@
 #include "ui/music_ui.h"
 #include "ui/affinity_ui.h"
 #include "ui/settings_ui.h"
+#include "ui/album_ui.h"
 #include "ui/ui_theme.h"
 #include "audio/music_manager.h"
 #include "servo/servo_controller.h"
@@ -33,6 +35,7 @@
 #include "power/power_manager.h"
 #include "network/wifi_manager.h"
 #include "network/vision_client.h"
+#include "network/web_server.h"
 #include "storage/storage_manager.h"
 
 FaceUI gFaceUI;
@@ -43,6 +46,7 @@ InfoUI gInfoUI;
 MusicUI gMusicUI;
 AffinityUI gAffinityUI;
 SettingsUI gSettingsUI;
+AlbumUI gAlbumUI;
 CameraManager gCameraManager;
 FaceDetector gFaceDetector;
 FaceTracker gFaceTracker;
@@ -51,6 +55,7 @@ XiaoZhiClient gXiaoZhiClient;
 PowerManager gPowerManager;
 WifiManager gWifiManager;
 StorageManager gStorageManager;
+PetWebServer gWebServer;
 VisionClient gVisionClient;
 MusicManager gMusicManager;
 ServoController gServoController;
@@ -829,7 +834,6 @@ static void updateCompanionMotion(unsigned long now) {
         // High affinity: happy wiggle
         AppState::instance().setEmotion(FaceEmotion::HAPPY);
         gServoMotionController.command(ServoMotionAction::SHAKE);
-        M5.Speaker.tone(1400, 40);
         gSickActive = true;
         gSickUntil = now + 2000;
     }
@@ -952,29 +956,23 @@ static void handleFaceTap(int x, int y) {
         appState.setEmotion(FaceEmotion::HAPPY);
         gFaceUI.setTemporaryGaze(0.0f, -0.5f, 1500);
         gServoMotionController.command(ServoMotionAction::NOD);
-        M5.Speaker.tone(1400, 60);
-        delay(70);
-        M5.Speaker.tone(1800, 60);
     } else if (y > cy + cy / 2) {
         appState.setEmotion(FaceEmotion::SHY);
         gFaceUI.setTemporaryGaze(0.0f, 0.5f, 1500);
         gServoMotionController.lookOffset(-10.0f, SERVO_FACE_TILT_OFFSET_DEG,
                                           SERVO_FACE_MOTION_SPEED_DPS, "Face tap shy");
-        M5.Speaker.tone(600, 100);
     } else if (x < cx) {
         gFaceUI.setTemporaryGaze(-1.0f, 0.0f, 1200);
         gServoMotionController.command(ServoMotionAction::LEFT);
         if (appState.getEmotion() != FaceEmotion::TRACKING) {
             appState.setEmotion(FaceEmotion::CURIOUS);
         }
-        M5.Speaker.tone(1000, 50);
     } else {
         gFaceUI.setTemporaryGaze(1.0f, 0.0f, 1200);
         gServoMotionController.command(ServoMotionAction::RIGHT);
         if (appState.getEmotion() != FaceEmotion::TRACKING) {
             appState.setEmotion(FaceEmotion::CURIOUS);
         }
-        M5.Speaker.tone(1100, 50);
     }
     gLastServoPoseEmotion = appState.getEmotion();
 }
@@ -1036,6 +1034,10 @@ void uiTask(void* pvParameters) {
 
                 case AppStateEnum::SETTINGS:
                     gSettingsUI.update();
+                    break;
+
+                case AppStateEnum::ALBUM:
+                    gAlbumUI.update();
                     break;
 
                 case AppStateEnum::SLEEP:
@@ -1249,6 +1251,12 @@ void networkTask(void* pvParameters) {
                 gNtpSynced = true;
                 Serial.printf("NTP synced: %02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min);
             }
+        }
+
+        if (gWifiManager.isConnected() && !gWebServer.isRunning()) {
+            gWebServer.begin();
+        } else if (!gWifiManager.isConnected() && gWebServer.isRunning()) {
+            gWebServer.stop();
         }
 
         if (AppState::instance().getState() == AppStateEnum::MENU) {
@@ -2425,6 +2433,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                         case 2: gPomodoroReturnTo = AppStateEnum::MENU; appState.setState(AppStateEnum::POMODORO); break;
                         case 3: gMusicReturnTo = AppStateEnum::MENU; appState.setState(AppStateEnum::MUSIC); break;
                         case 4: appState.setState(AppStateEnum::SYSTEM_INFO); break;
+                        case 5: appState.setState(AppStateEnum::ALBUM); break;
                     }
                     break;
                 }
@@ -2625,6 +2634,49 @@ static void gestureEventHandler(const GestureEvent& event) {
             break;
         }
 
+        case AppStateEnum::ALBUM: {
+            AlbumViewMode mode = gAlbumUI.viewMode();
+            if (mode == AlbumViewMode::GRID) {
+                if (event.type == GestureType::SINGLE_TAP) {
+                    AlbumHitZone hit = gAlbumUI.hitTest(event.endX, event.endY);
+                    if (hit == AlbumHitZone::BACK) {
+                        appState.setState(AppStateEnum::MENU);
+                    } else if (hit == AlbumHitZone::THUMBNAIL) {
+                        int idx = gAlbumUI.thumbnailIndexAt(event.endX, event.endY);
+                        if (idx >= 0) {
+                            gAlbumUI.showPhoto(idx);
+                        }
+                    }
+                } else if (event.type == GestureType::LEFT_SWIPE) {
+                    appState.setState(AppStateEnum::MENU);
+                } else if (event.type == GestureType::UP_SWIPE) {
+                    gAlbumUI.scrollDown();
+                } else if (event.type == GestureType::DOWN_SWIPE) {
+                    gAlbumUI.scrollUp();
+                }
+            } else {
+                if (event.type == GestureType::LEFT_SWIPE) {
+                    gAlbumUI.nextPhoto();
+                } else if (event.type == GestureType::RIGHT_SWIPE) {
+                    if (gAlbumUI.currentIndex() == 0) {
+                        gAlbumUI.setViewMode(AlbumViewMode::GRID);
+                    } else {
+                        gAlbumUI.prevPhoto();
+                    }
+                } else if (event.type == GestureType::SINGLE_TAP) {
+                    AlbumHitZone hit = gAlbumUI.hitTest(event.endX, event.endY);
+                    if (hit == AlbumHitZone::BACK) {
+                        gAlbumUI.setViewMode(AlbumViewMode::GRID);
+                    } else if (hit == AlbumHitZone::DELETE) {
+                        gAlbumUI.deleteCurrentPhoto();
+                    }
+                } else if (event.type == GestureType::LONG_PRESS) {
+                    gAlbumUI.deleteCurrentPhoto();
+                }
+            }
+            break;
+        }
+
         case AppStateEnum::SLEEP:
             switch (event.type) {
                 case GestureType::SINGLE_TAP:
@@ -2664,6 +2716,9 @@ static void stateChangeHandler(AppStateEnum state) {
     }
     if (state != AppStateEnum::SETTINGS) {
         gSettingsUI.hide();
+    }
+    if (state != AppStateEnum::ALBUM) {
+        gAlbumUI.hide();
     }
 
     switch (state) {
@@ -2857,6 +2912,17 @@ static void stateChangeHandler(AppStateEnum state) {
             gInfoUI.hide();
             gMusicUI.hide();
             gSettingsUI.show();
+            break;
+
+        case AppStateEnum::ALBUM:
+            gMenuUI.hide();
+            gCameraDebugUI.hide();
+            gPomodoroUI.hide();
+            gInfoUI.hide();
+            gMusicUI.hide();
+            gStorageManager.ensureReady();
+            gAlbumUI.scanPhotos();
+            gAlbumUI.show();
             break;
 
         case AppStateEnum::SLEEP:
@@ -3288,6 +3354,7 @@ void setup() {
     gMusicUI.begin();
     gAffinityUI.begin();
     gSettingsUI.begin();
+    gAlbumUI.begin();
     gServoMotionController.attach(gServoController);
     gPomodoroUI.setCompleteCallback(handlePomodoroComplete);
 
@@ -3332,6 +3399,116 @@ void setup() {
     bootStep("EventBus...", 13);
     EventBus::instance().subscribe(EventType::FACE_DETECTED, handleEvent);
     EventBus::instance().subscribe(EventType::FACE_LOST, handleEvent);
+
+    // Web server callbacks
+    {
+        WebControlCallbacks wcb;
+        wcb.getStatus = []() -> String {
+            JsonDocument doc;
+            AppStateEnum st = AppState::instance().getState();
+            const char* pages[] = {"face","menu","wifi","camera","ai_vision","pomodoro","music","system","bond","ai","settings","album","sleep"};
+            int idx = static_cast<int>(st);
+            doc["page"] = (idx >= 0 && idx < 13) ? pages[idx] : "unknown";
+            doc["wifi"] = gWifiManager.isConnected() ? "Connected" : "Disconnected";
+            doc["ai"] = gXiaoZhiClient.isActivated() ? (gXiaoZhiClient.isWsConnected() ? "Online" : "Connecting") : "Not activated";
+            doc["sd"] = gStorageManager.isReady() ? "Ready" : "Not ready";
+            doc["heap"] = ESP.getFreeHeap() / 1024;
+            doc["psram"] = ESP.getFreePsram() / 1024;
+            String out;
+            serializeJson(doc, out);
+            return out;
+        };
+        wcb.navigatePage = [](const String& page) -> bool {
+            DevicePageAction action = DevicePageAction::NONE;
+            if (page == "face") action = DevicePageAction::FACE;
+            else if (page == "menu") action = DevicePageAction::MENU;
+            else if (page == "wifi") action = DevicePageAction::WIFI;
+            else if (page == "system") action = DevicePageAction::SYSTEM;
+            else if (page == "camera") action = DevicePageAction::CAMERA;
+            else if (page == "music") action = DevicePageAction::MUSIC;
+            else if (page == "pomodoro") action = DevicePageAction::POMODORO;
+            else if (page == "ai") action = DevicePageAction::AI;
+            else if (page == "album") { AppState::instance().setState(AppStateEnum::ALBUM); return true; }
+            if (action == DevicePageAction::NONE) return false;
+            return navigateDevicePage(action);
+        };
+        wcb.setBrightness = [](const String& level) {
+            if (level == "dim") applyBrightnessLevel(SystemBrightnessLevel::DIM);
+            else if (level == "normal") applyBrightnessLevel(SystemBrightnessLevel::NORMAL);
+            else if (level == "bright") applyBrightnessLevel(SystemBrightnessLevel::BRIGHT);
+        };
+        wcb.setVolume = [](const String& level) {
+            if (level == "quiet") applyVolumeLevel(SystemVolumeLevel::QUIET);
+            else if (level == "normal") applyVolumeLevel(SystemVolumeLevel::NORMAL);
+            else if (level == "loud") applyVolumeLevel(SystemVolumeLevel::LOUD);
+        };
+        wcb.sleepControl = [](const String& action) {
+            if (action == "sleep") {
+                AppState::instance().setState(AppStateEnum::SLEEP);
+                enterSleepMode();
+            } else if (action == "wake") {
+                if (AppState::instance().getState() == AppStateEnum::SLEEP) {
+                    AppState::instance().setState(AppStateEnum::FACE);
+                    wakeFromSleepMode();
+                }
+            }
+        };
+        wcb.listPhotos = []() -> String {
+            JsonDocument doc;
+            JsonArray arr = doc.to<JsonArray>();
+            if (gStorageManager.isReady()) {
+                File dir = SD.open(PHOTO_DIR);
+                if (dir && dir.isDirectory()) {
+                    File entry;
+                    while ((entry = dir.openNextFile())) {
+                        String name = entry.name();
+                        if (name.endsWith(".jpg") || name.endsWith(".JPG")) {
+                            arr.add(name);
+                        }
+                        entry.close();
+                    }
+                    dir.close();
+                }
+            }
+            String out;
+            serializeJson(doc, out);
+            return out;
+        };
+        wcb.getPhoto = [](const String& name, uint8_t** data, size_t* len) -> bool {
+            if (!gStorageManager.isReady()) return false;
+            String path = String(PHOTO_DIR) + "/" + name;
+            File f = SD.open(path, FILE_READ);
+            if (!f) return false;
+            size_t sz = f.size();
+            if (sz == 0 || sz > 300000) { f.close(); return false; }
+            *data = (uint8_t*)ps_malloc(sz);
+            if (!*data) { f.close(); return false; }
+            f.read(*data, sz);
+            f.close();
+            *len = sz;
+            return true;
+        };
+        wcb.deletePhoto = [](const String& name) -> bool {
+            String path = String(PHOTO_DIR) + "/" + name;
+            return gStorageManager.deleteFile(path.c_str());
+        };
+        wcb.servoControl = [](const String& action) -> bool {
+            if (!gServoMotionController.ensureReady()) return false;
+            if (action == "release") return gServoMotionController.release();
+            ServoMotionAction motionAction = ServoMotionAction::NONE;
+            if (action == "center") motionAction = ServoMotionAction::CENTER;
+            else if (action == "left") motionAction = ServoMotionAction::LEFT;
+            else if (action == "right") motionAction = ServoMotionAction::RIGHT;
+            else if (action == "up") motionAction = ServoMotionAction::UP;
+            else if (action == "down") motionAction = ServoMotionAction::DOWN;
+            else if (action == "nod") motionAction = ServoMotionAction::NOD;
+            else if (action == "shake") motionAction = ServoMotionAction::SHAKE;
+            else if (action == "dance") motionAction = ServoMotionAction::DANCE;
+            else return false;
+            return gServoMotionController.command(motionAction);
+        };
+        gWebServer.setCallbacks(wcb);
+    }
 
     bootStep("Creating tasks...", 14);
 

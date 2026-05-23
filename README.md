@@ -1,13 +1,13 @@
 # CoreS3 AI Pet Firmware
 
-Firmware for a M5Stack CoreS3 desktop pet demo. It combines an animated face, touch and IMU interaction, Wi-Fi status, camera preview and photo capture, Pomodoro, SD music playback, XiaoZhi voice interaction, and AI Vision requests exposed through XiaoZhi MCP tools.
+Firmware for a M5Stack CoreS3 desktop pet demo. It combines an animated face, touch and IMU interaction, Wi-Fi status, camera preview and photo capture, a local photo album, Pomodoro, SD music playback, XiaoZhi voice interaction, and AI Vision requests exposed through XiaoZhi MCP tools.
 
 Chinese documentation is available in [README_CN.md](README_CN.md).
 
 
 ## Current Status
 
-- Face UI: 11 expressions, blinking, gaze smoothing, temporary gaze overrides, expression particles, tap sound feedback, time-aware idle behavior after NTP sync, and safe two-axis servo reactions.
+- Face UI: 11 expressions, blinking, gaze smoothing, temporary gaze overrides, expression particles, time-aware idle behavior after NTP sync, and safe two-axis servo reactions.
 - Face interaction: light shaking triggers `SURPRISED`, repeated shaking can trigger `SICK`, clockwise and counter-clockwise twists trigger curious left/right reactions, and sleep can be exited by tap or shake.
 - Settings page: opened from the Face page by up swipe, with runtime brightness and volume presets.
 - Camera Debug: 320 x 240 preview, FPS and status overlay, Back button, JPEG capture to SD, and heuristic face centering before capture.
@@ -17,10 +17,12 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - System page: a shared runtime status snapshot is rendered as fixed Wi-Fi, SD, Audio, Control, and Memory rows, with XiaoZhi and Vision summary text in the subtitle.
 - Pomodoro: four presets selected by IMU orientation, screen rotation, timer controls, and completion feedback.
 - Music: scans `/music` on the SD card and plays up to 16 MP3 or PCM WAV files. Volume uses shared `quiet`, `normal`, and `loud` runtime presets. A clockwise twist can skip to the next track.
+- Album: a sixth Menu app scans `/photos`, shows up to 12 thumbnails per page, opens full-screen photo view, and supports on-device photo deletion.
 - Servo interaction: Face taps, idle motions, XiaoZhi pet reactions, XiaoZhi servo commands, and the dance demo share the same safe motion controller and rate limits. Face and XiaoZhi expression poses keep the mechanical neutral at pan 90 degrees and tilt 140 degrees.
 - Servo fallback: the PCA9685 driver disables itself after three missing-device scans, so an unplugged servo base does not keep polling PortA forever.
 - Affinity: the Bond page shows score, level, mood, and recent interaction. The affinity score persists in NVS across reboot.
 - XiaoZhi AI: OTA activation and config, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake and tools, device status query, and device control for page switching, brightness, volume, and sleep or wake.
+- Web control: when Wi-Fi is connected, the firmware starts a lightweight HTTP control page that shows status, switches pages, adjusts brightness and volume, sends servo actions, and browses or deletes saved photos.
 - Power: battery voltage reads through `M5.Power.getBatteryVoltage()`. Brownout safe mode reduces automatic Face-page camera/servo/audio load after a brownout reset.
 
 ## Hardware
@@ -74,11 +76,11 @@ src/
 |- ai/         # XiaoZhi activation, WebSocket, Opus audio, MCP
 |- audio/      # SD MP3/WAV music player
 |- config/     # Firmware constants and Wi-Fi secret template
-|- network/    # Wi-Fi manager and AI Vision HTTP client
+|- network/    # Wi-Fi manager, AI Vision HTTP client, and local web control server
 |- power/      # Sleep state and battery voltage reporting
 |- servo/      # PCA9685 driver and shared servo motion layer
-|- storage/    # SD card probing, photo paths, file writes
-|- ui/         # Face, menu, camera, Pomodoro, system, music, affinity, settings UI
+|- storage/    # SD card probing, photo paths, file writes, file deletion
+|- ui/         # Face, menu, camera, Pomodoro, system, music, affinity, settings, album UI
 `- vision/     # Camera manager, heuristic face detector, tracker, IMU orientation
 ```
 
@@ -151,14 +153,15 @@ pio device monitor -p COM5 -b 115200
 - Face page: right swipe opens Menu, left swipe or double tap enters XiaoZhi AI, down swipe opens Bond, up swipe opens Settings, tap top/bottom/left/right changes expression and head pose, shake and twist gestures trigger IMU reactions, and long press enters Sleep.
 - AI page: single tap toggles listening, right swipe or long press returns to Face.
 - Bond page: Back, up swipe, or left swipe returns to Face.
-- Menu page: tap an icon to open Wi-Fi, Camera, Timer, Music, or System. Back returns to Face.
+- Menu page: tap an icon to open Wi-Fi, Camera, Timer, Music, System, or Album. Back returns to Face.
 - Settings page: tap `Low`, `Mid`, or `High` under Brightness and Volume to apply runtime presets. Back, left swipe, or down swipe returns to Face.
 - Camera Debug: `SHOT` saves `/photos/IMG_####.jpg`. If the heuristic detector finds a plausible face region, the firmware briefly tries to center it with the servos before capture. Back or left swipe returns to Menu.
-- AI Vision: Back or left swipe closes preview and returns to XiaoZhi AI.
+- AI Vision: Back button or right swipe closes preview and returns to XiaoZhi AI. Long press closes preview, shuts the audio channel, and returns to Face.
 - Pomodoro: rotate the device to select a preset. Start, Pause, and Reset control the timer. Back returns to Menu.
 - Music: Play/Pause, Stop, and Next operate on MP3/WAV files found in `/music`. A clockwise twist can also skip to the next track.
+- Album: in grid view, tap a thumbnail to open it, up/down swipe to page through thumbnails, and left swipe or Back to return to Menu. In full view, left swipe moves forward, right swipe moves back or returns to the grid at the first photo, and Delete or long press removes the current photo.
 - System: shows Wi-Fi, SD, Audio, Control, and Memory rows, while the subtitle summarizes XiaoZhi and Vision readiness. Back returns to Menu.
-- Sleep: tap or shake wakes the device back to the Face page.
+- Sleep: tap or double tap wakes the device back to the Face page.
 
 ## SD Card Content
 
@@ -171,6 +174,8 @@ The firmware creates and uses:
 ```
 
 Music playback supports MP3 files plus PCM WAV files with 8-bit or 16-bit samples and one or two channels. MP3 stereo or mono output is mixed to mono before it is queued to the built-in speaker. The first 16 audio files are scanned and sorted by filename.
+
+Saved photos can be browsed from the on-device Album page or from the web control page while Wi-Fi is connected.
 
 ## XiaoZhi AI
 
@@ -214,9 +219,23 @@ AI Vision depends on the vision endpoint and token delivered by the XiaoZhi serv
 
 `self.device.status` accepts `detail=brief|full`. `brief` returns two short Chinese sentences covering Wi-Fi and SD first, then Music, AI, and Vision. `full` appends heap and PSRAM information.
 
-`self.device.control` supports optional `page`, `brightness`, `volume`, and `sleep` fields. Supported pages are `face`, `menu`, `wifi`, `system`, `camera`, `music`, `pomodoro`, and `ai`. Brightness presets are `dim`, `normal`, and `bright`. Volume presets are `quiet`, `normal`, and `loud`. Sleep supports `wake` and `sleep`. Wake restores the last non-sleep brightness preference instead of hard-coding full brightness.
+`self.device.control` supports optional `page`, `brightness`, `volume`, and `sleep` fields. Supported pages are `face`, `menu`, `wifi`, `system`, `camera`, `music`, `pomodoro`, and `ai`. Brightness presets are `dim`, `normal`, and `bright`. Volume presets are `quiet`, `normal`, and `loud`. Sleep supports `wake` and `sleep`. Wake restores the last non-sleep brightness preference instead of hard-coding full brightness. The current MCP schema does not expose the new Album page.
 
 Transcript fallback also recognizes common Chinese commands for status query, opening the System, Music, Camera, and Pomodoro pages, returning to the home page, adjusting brightness, adjusting volume, and sleep or wake requests.
+
+## Web Control
+
+When Wi-Fi is connected, the firmware starts an HTTP server on port `80` and serves a lightweight mobile-friendly control page from the device IP shown in the Wi-Fi page.
+
+The current web UI supports:
+
+- Status polling for page, Wi-Fi, AI, SD, heap, and PSRAM.
+- Page navigation for `face`, `menu`, `camera`, `music`, `pomodoro`, `album`, `ai`, and `system`.
+- Brightness presets `dim`, `normal`, and `bright`.
+- Volume presets `quiet`, `normal`, and `loud`.
+- Sleep and wake actions.
+- Servo actions `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, `dance`, and `release`.
+- Listing, opening, and deleting saved JPEG photos.
 
 ## Known Limitations
 
@@ -224,6 +243,7 @@ Transcript fallback also recognizes common Chinese commands for status query, op
 - Photo face tracking is still open-loop servo correction around heuristic boxes. It is useful for demo centering, not robust computer vision.
 - AI Vision requires a XiaoZhi-provided vision endpoint.
 - CoreS3 built-in microphone and speaker are half-duplex. Full-duplex interruption and echo cancellation are not implemented.
+- The web control page is local HTTP on the same LAN and is not authenticated. Use it only on trusted networks.
 - Brightness and volume presets are runtime-only and reset to `normal` plus `normal` after reboot.
 - SD card behavior depends on card format, contact, and power stability. The firmware retries SD init at 25, 10, 4, and 1 MHz.
 - Servo expression and XiaoZhi control are open-loop pose control with rate limiting. They are not PID gimbal control or autonomous base motion.

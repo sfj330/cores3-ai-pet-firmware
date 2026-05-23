@@ -117,8 +117,8 @@ private:
     bool opusReady_ = false;
     bool openingAudioChannel_ = false;
     bool micActive_ = false;
-    bool speakerActive_ = false;
-    bool foregroundPaused_ = false;
+    volatile bool speakerActive_ = false;
+    volatile bool foregroundPaused_ = false;
     bool listenRequested_ = false;
     bool listenStarted_ = false;
     bool mcpReady_ = false;

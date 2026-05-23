@@ -100,6 +100,11 @@ bool StorageManager::writeFile(const char* path, const uint8_t* data, size_t len
     return written == len;
 }
 
+bool StorageManager::deleteFile(const char* path) {
+    if (!ready_ || !path) return false;
+    return SD.remove(path);
+}
+
 String StorageManager::statusText() const {
     return status_;
 }

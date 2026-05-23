@@ -14,6 +14,7 @@ enum class AppStateEnum {
     AFFINITY,
     AI,
     SETTINGS,
+    ALBUM,
     SLEEP
 };
 

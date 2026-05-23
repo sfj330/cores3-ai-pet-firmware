@@ -75,6 +75,8 @@ pio device monitor -b 115200
 
 固件会按 25、10、4、1 MHz 逐级重试 SD 初始化。
 
+如果相册页或网页照片列表是空的，但 SD 已经挂载成功，检查 `/photos` 下文件名是否为标准 `.jpg` 或 `.JPG`。
+
 ## 没有 AI 回复
 
 串口里应看到类似流程：
@@ -90,3 +92,16 @@ tts
 ```
 
 如果 AI Vision 提示 endpoint missing，说明当前小智会话没有下发 vision URL/token。
+
+如果前台相机、音乐或页面工具动作期间 TTS 播放被截断，检查是否出现 `pauseForForegroundTool` 流程和 `speaker queue timeout` 日志。近期代码已经把播放队列等待时间调长，并在前台暂停期间直接丢弃解码后的播放片段，以降低音频资源冲突。
+
+## 网页控制页无法访问
+
+检查：
+
+- Wi-Fi 是否已连接，Wi-Fi 页面是否显示了有效设备 IP。
+- 串口中是否出现 `WebServer: started on port 80`。
+- 手机或电脑是否与 CoreS3 处于同一局域网。
+- 当前是否有别的服务占用了 `80` 端口。
+
+如果 Wi-Fi 断开，固件会自动停止网页服务；重连后会再次启动。

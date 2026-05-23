@@ -13,8 +13,9 @@ constexpr AppLayout APP_LAYOUT[MenuUI::APP_COUNT] = {
     {58, 44},
     {160, 44},
     {262, 44},
-    {109, 130},
-    {211, 130}
+    {58, 130},
+    {160, 130},
+    {262, 130}
 };
 
 const char* appTitle(int index) {
@@ -24,6 +25,7 @@ const char* appTitle(int index) {
         case 2: return "Timer";
         case 3: return "Music";
         case 4: return "System";
+        case 5: return "Album";
         default: return "";
     }
 }
@@ -35,6 +37,7 @@ uint16_t appAccent(int index, bool wifiConnected) {
         case 2: return UiTheme::AMBER;
         case 3: return UiTheme::BLUE;
         case 4: return UiTheme::GREEN;
+        case 5: return UiTheme::CYAN;
         default: return UiTheme::CYAN;
     }
 }
@@ -187,6 +190,18 @@ void MenuUI::drawAppIcon(int index, int x, int y, int size, uint16_t accent) {
                 int y2 = cy + static_cast<int>(sin(angle) * 22.0f);
                 canvas_.drawLine(x1, y1, x2, y2, fg);
             }
+            break;
+        case 5:
+            // Album icon: stacked photos
+            canvas_.fillRoundRect(x + 8, y + 14, size - 16, size - 22, 3, fg);
+            canvas_.fillRoundRect(x + 12, y + 18, size - 24, size - 30, 2, accent);
+            canvas_.fillTriangle(x + 14, y + size - 12,
+                                 x + 22, y + 24,
+                                 x + 30, y + size - 12, fg);
+            canvas_.fillTriangle(x + 26, y + size - 12,
+                                 x + 32, y + 28,
+                                 x + size - 14, y + size - 12, fg);
+            canvas_.fillCircle(x + size - 18, y + 22, 4, fg);
             break;
     }
 }

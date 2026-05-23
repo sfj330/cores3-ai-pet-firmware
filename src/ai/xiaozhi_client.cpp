@@ -926,7 +926,7 @@ void XiaoZhiClient::handleBinaryMessage(const uint8_t* data, size_t len) {
     if (!speakerActive_ && !startSpeaker()) {
         return;
     }
-    if (!waitForSpeakerQueueRoom(200)) {
+    if (!waitForSpeakerQueueRoom(400)) {
         playbackQueueFailCount_++;
         if (playbackQueueFailCount_ == 1 || (playbackQueueFailCount_ % 25) == 0) {
             Serial.printf("XiaoZhi: speaker queue timeout rate=%d len=%u queued=%u fail=%u\n",
@@ -937,6 +937,8 @@ void XiaoZhiClient::handleBinaryMessage(const uint8_t* data, size_t len) {
         }
         return;
     }
+
+    if (foregroundPaused_) return;
 
     int16_t* playbackBuf = pcmPlaybackBufs_[playbackBufferIndex_];
     if (!playbackBuf) return;
@@ -1068,7 +1070,7 @@ void XiaoZhiClient::stopMic() {
         vTaskDelay(pdMS_TO_TICKS(5));
     }
     M5.Mic.end();
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(30));
     micActive_ = false;
 }
 
@@ -1076,7 +1078,7 @@ bool XiaoZhiClient::startSpeaker() {
     stopMic();
     if (M5.Speaker.isRunning()) {
         M5.Speaker.end();
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     auto spk_cfg = M5.Speaker.config();
@@ -1089,10 +1091,8 @@ bool XiaoZhiClient::startSpeaker() {
     speakerActive_ = M5.Speaker.begin();
     if (speakerActive_) {
         resetPlaybackQueueState();
-        M5.Speaker.setAllChannelVolume(255);
-        M5.Speaker.setChannelVolume(XIAOZHI_SPEAKER_CHANNEL, 255);
         M5.Speaker.setVolume(ttsVolume_);
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
     if (!speakerActive_) {
         Serial.println("XiaoZhi: speaker begin failed");
@@ -1105,7 +1105,7 @@ void XiaoZhiClient::stopSpeaker() {
     if (!speakerActive_ && !M5.Speaker.isRunning()) return;
     M5.Speaker.stop(XIAOZHI_SPEAKER_CHANNEL);
     M5.Speaker.end();
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(50));
     speakerActive_ = false;
     resetPlaybackQueueState();
 }
