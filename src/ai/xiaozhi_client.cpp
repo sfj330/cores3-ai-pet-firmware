@@ -12,7 +12,7 @@
 namespace {
 constexpr bool XIAOZHI_VERBOSE_WS_LOG = false;
 constexpr uint8_t XIAOZHI_SPEAKER_CHANNEL = 0;
-constexpr uint8_t XIAOZHI_MAX_QUEUED_BUFFERS = 2;
+constexpr uint8_t XIAOZHI_MAX_QUEUED_BUFFERS = 4;
 }
 
 XiaoZhiClient::XiaoZhiClient() = default;
@@ -926,7 +926,7 @@ void XiaoZhiClient::handleBinaryMessage(const uint8_t* data, size_t len) {
     if (!speakerActive_ && !startSpeaker()) {
         return;
     }
-    if (!waitForSpeakerQueueRoom(400)) {
+    if (!waitForSpeakerQueueRoom(600)) {
         playbackQueueFailCount_++;
         if (playbackQueueFailCount_ == 1 || (playbackQueueFailCount_ % 25) == 0) {
             Serial.printf("XiaoZhi: speaker queue timeout rate=%d len=%u queued=%u fail=%u\n",
@@ -945,8 +945,8 @@ void XiaoZhiClient::handleBinaryMessage(const uint8_t* data, size_t len) {
 
     int decodedSamples = opus_decode(opusDecoder_, data, len, playbackBuf, OPUS_MAX_DECODE_SAMPLES, 0);
     if (decodedSamples <= 0) {
-        Serial.printf("XiaoZhi: opus decode failed: %d len=%u\n", decodedSamples, static_cast<unsigned>(len));
-        return;
+        decodedSamples = opus_decode(opusDecoder_, nullptr, 0, playbackBuf, 960, 0);
+        if (decodedSamples <= 0) return;
     }
 
     if (!queueSpeakerSamples(playbackBuf, static_cast<size_t>(decodedSamples))) {
@@ -1084,14 +1084,16 @@ bool XiaoZhiClient::startSpeaker() {
     auto spk_cfg = M5.Speaker.config();
     spk_cfg.sample_rate = serverSampleRate_ > 0 ? serverSampleRate_ : 24000;
     spk_cfg.stereo = false;
-    spk_cfg.dma_buf_count = 8;
-    spk_cfg.dma_buf_len = 256;
+    spk_cfg.dma_buf_count = 12;
+    spk_cfg.dma_buf_len = 512;
     spk_cfg.task_priority = 5;
     M5.Speaker.config(spk_cfg);
     speakerActive_ = M5.Speaker.begin();
     if (speakerActive_) {
         resetPlaybackQueueState();
         M5.Speaker.setVolume(ttsVolume_);
+        memset(pcmPlaybackBufs_[0], 0, 960 * sizeof(int16_t));
+        M5.Speaker.playRaw(pcmPlaybackBufs_[0], 960, spk_cfg.sample_rate, false, 1, XIAOZHI_SPEAKER_CHANNEL, false);
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     if (!speakerActive_) {

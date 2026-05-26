@@ -32,9 +32,10 @@ Music task  -> SD MP3/WAV streaming when music is active
 - Camera is lazy-started. Face-page detection uses short bursts; Camera Debug and AI Vision own foreground capture.
 - Camera foreground startup is deferred to the main loop so touch/state callbacks stay responsive.
 - XiaoZhi voice owns microphone and speaker while listening/speaking. Music is stopped or paused before exclusive audio use.
-- The local web server only runs while Wi-Fi is connected and exposes page control, status, servo actions, and photo browsing hooks.
+- The local web server only runs while Wi-Fi is connected and exposes page control, status, servo actions, MJPEG stream hooks, local OTA upload, and photo browsing hooks.
 - Servo motions go through `ServoMotionController` so large angle changes are rate-limited.
 - PCA9685 is optional. If it is missing for three scans in one boot, the driver disables itself instead of polling forever.
+- Power policy is tiered: low battery changes UI behavior first, and sustained critical battery triggers deep sleep.
 
 ## Folder Responsibilities
 
@@ -44,7 +45,7 @@ Music task  -> SD MP3/WAV streaming when music is active
 - `src/ai`: XiaoZhi activation, WebSocket, Opus audio, MCP tools.
 - `src/audio`: SD music playback.
 - `src/servo`: PCA9685 driver and safe motion planner.
-- `src/power`: battery voltage, low battery, and sleep helpers.
+- `src/power`: battery voltage, low and critical battery handling, and sleep helpers.
 - `src/storage`: SD card probing, photo path generation, file writes, and file deletion.
 - `src/network`: Wi-Fi, remote AI Vision HTTP client, and local web control server.
 
@@ -52,4 +53,5 @@ Music task  -> SD MP3/WAV streaming when music is active
 
 - Add a new page by extending `AppStateEnum`, adding a UI class under `src/ui`, then routing it in `stateChangeHandler()`, `gestureEventHandler()`, and any external control surfaces such as XiaoZhi tools or the web server if needed.
 - Add new AI tools in `xiaozhi_client.*` and process them through pending-tool handlers in `main.cpp`.
-- Keep feature flags and timing constants in `src/config/app_config.h` so demos can be tuned without hunting through implementation files.
+- If you add new web features, update both `web_server.*` and `web_ui.h`, and document whether they only mirror active foreground resources or can allocate those resources themselves.
+- Keep feature flags and timing constants in `src/config/app_config.h` so behavior can be tuned without hunting through implementation files.

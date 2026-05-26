@@ -6,6 +6,7 @@
 class PowerManager {
 public:
     using LowBatteryCallback = std::function<void(float voltage)>;
+    using CriticalBatteryCallback = std::function<void(float voltage)>;
 
     PowerManager();
     bool begin();
@@ -21,13 +22,18 @@ public:
 
     // Whether battery is critically low
     bool isLowBattery() const;
+    bool isCriticalBattery() const;
 
     void setLowBatteryCallback(LowBatteryCallback cb);
+    void setCriticalBatteryCallback(CriticalBatteryCallback cb);
 
     // Trigger low-power sleep
     void enterSleep();
     void exitSleep();
     bool isSleeping() const;
+
+    // Deep sleep (ESP32 hardware sleep)
+    void enterDeepSleep();
 
 private:
     float readVoltage();
@@ -35,6 +41,9 @@ private:
     float voltage_ = 0.0f;
     float percentage_ = 0.0f;
     bool lowBattery_ = false;
+    bool criticalBattery_ = false;
+    unsigned long criticalStartMs_ = 0;
     LowBatteryCallback callback_ = nullptr;
+    CriticalBatteryCallback criticalCallback_ = nullptr;
     bool sleeping_ = false;
 };

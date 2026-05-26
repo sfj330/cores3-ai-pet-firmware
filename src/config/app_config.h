@@ -55,7 +55,7 @@ constexpr int TOUCH_SAMPLING_HZ = 50;
 // ==================== Camera ====================
 constexpr int CAMERA_FRAME_WIDTH = 320;
 constexpr int CAMERA_FRAME_HEIGHT = 240;
-constexpr int CAMERA_FPS = 15;
+constexpr int CAMERA_FPS = 20;
 constexpr bool CAMERA_INIT_ON_BOOT = false;
 constexpr int CAMERA_JPEG_QUALITY = 85;
 
@@ -93,6 +93,9 @@ constexpr int POWER_TASK_INTERVAL_MS = 1000;    // 1 Hz monitoring
 constexpr float BATTERY_FULL_VOLTAGE = 4.2f;
 constexpr float BATTERY_EMPTY_VOLTAGE = 3.3f;
 constexpr float BATTERY_LOW_THRESHOLD = 3.5f;   // Go SLEEPY below this
+constexpr float BATTERY_CRITICAL_VOLTAGE = 3.2f; // Deep sleep below this
+constexpr unsigned long BATTERY_CRITICAL_DURATION_MS = 30000;
+constexpr unsigned long BATTERY_LOW_REMIND_INTERVAL_MS = 60000;
 constexpr unsigned long BROWNOUT_SAFE_MODE_MS = 60000;
 
 // ==================== AI ====================

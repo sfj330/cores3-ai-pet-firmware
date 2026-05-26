@@ -47,6 +47,11 @@ void FaceUI::wake() {
     sleeping_ = false;
 }
 
+void FaceUI::triggerBlink() {
+    isBlinking_ = true;
+    blinkStartTime_ = millis();
+}
+
 void FaceUI::setTemporaryGaze(float dx, float dy, unsigned long durationMs) {
     tempGazeX_ = dx;
     tempGazeY_ = dy;

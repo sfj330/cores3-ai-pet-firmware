@@ -1,6 +1,6 @@
 # CoreS3 AI Pet Firmware
 
-Firmware for a M5Stack CoreS3 desktop pet demo. It combines an animated face, touch and IMU interaction, Wi-Fi status, camera preview and photo capture, a local photo album, Pomodoro, SD music playback, XiaoZhi voice interaction, and AI Vision requests exposed through XiaoZhi MCP tools.
+Firmware for a M5Stack CoreS3 desktop pet. It combines an animated face, touch and IMU interaction, Wi-Fi status, camera preview and photo capture, a local photo album, Pomodoro, SD music playback, XiaoZhi voice interaction, AI Vision requests exposed through XiaoZhi MCP tools, and a LAN web panel for control, live preview, and local OTA.
 
 Chinese documentation is available in [README_CN.md](README_CN.md).
 
@@ -10,7 +10,7 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - Face UI: 11 expressions, blinking, gaze smoothing, temporary gaze overrides, expression particles, time-aware idle behavior after NTP sync, and safe two-axis servo reactions.
 - Face interaction: light shaking triggers `SURPRISED`, repeated shaking can trigger `SICK`, clockwise and counter-clockwise twists trigger curious left/right reactions, and sleep can be exited by tap or shake.
 - Settings page: opened from the Face page by up swipe, with runtime brightness and volume presets.
-- Camera Debug: 320 x 240 preview, FPS and status overlay, Back button, JPEG capture to SD, and heuristic face centering before capture.
+- Camera Debug: 320 x 240 preview, target 20 FPS camera pacing with adaptive frame delay, FPS and status overlay, Back button, JPEG capture to SD, and heuristic face centering before capture.
 - Camera stability: foreground Camera and AI Vision startup is deferred out of the touch/state callback, clears camera failure cooldown for user-initiated opens, releases CoreS3 internal I2C before camera init, temporarily suspends the touch task around camera init, and retries once after a clean camera deinit.
 - AI Vision: camera preview and image description requests through the vision endpoint provided by XiaoZhi.
 - Face detection: the Arduino build uses a lightweight skin-color heuristic for rough face-area estimation and servo centering. It is not an ML face detector or face recognition system. On the Face page it runs in short bursts instead of keeping the camera active permanently.
@@ -18,12 +18,12 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - Pomodoro: four presets selected by IMU orientation, screen rotation, timer controls, and completion feedback.
 - Music: scans `/music` on the SD card and plays up to 16 MP3 or PCM WAV files. Volume uses shared `quiet`, `normal`, and `loud` runtime presets. A clockwise twist can skip to the next track.
 - Album: a sixth Menu app scans `/photos`, shows up to 12 thumbnails per page, opens full-screen photo view, and supports on-device photo deletion.
-- Servo interaction: Face taps, idle motions, XiaoZhi pet reactions, XiaoZhi servo commands, and the dance demo share the same safe motion controller and rate limits. Face and XiaoZhi expression poses keep the mechanical neutral at pan 90 degrees and tilt 140 degrees.
+- Servo interaction: Face taps, idle motions, XiaoZhi pet reactions, XiaoZhi servo commands, and the dance action share the same safe motion controller and rate limits. Face and XiaoZhi expression poses keep the mechanical neutral at pan 90 degrees and tilt 140 degrees.
 - Servo fallback: the PCA9685 driver disables itself after three missing-device scans, so an unplugged servo base does not keep polling PortA forever.
 - Affinity: the Bond page shows score, level, mood, and recent interaction. The affinity score persists in NVS across reboot.
-- XiaoZhi AI: OTA activation and config, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake and tools, device status query, and device control for page switching, brightness, volume, and sleep or wake.
-- Web control: when Wi-Fi is connected, the firmware starts a lightweight HTTP control page that shows status, switches pages, adjusts brightness and volume, sends servo actions, and browses or deletes saved photos.
-- Power: battery voltage reads through `M5.Power.getBatteryVoltage()`. Brownout safe mode reduces automatic Face-page camera/servo/audio load after a brownout reset.
+- XiaoZhi AI: OTA activation and config, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake and tools, device status query, and device control for page switching, brightness, volume, and sleep or wake. Recent playback tuning increases speaker queue depth and decode recovery to make TTS more resilient.
+- Web control: when Wi-Fi is connected, the firmware starts a lightweight HTTP control page that shows status, switches pages, adjusts brightness and volume, sends servo actions, streams the current camera session, uploads OTA firmware, and browses or deletes saved photos.
+- Power: battery voltage reads through `M5.Power.getBatteryVoltage()`. Low battery reminders can push the Face page to `SLEEPY`, and if voltage stays below 3.2 V for 30 seconds the device enters timed deep sleep to protect the battery. Brownout safe mode still reduces automatic Face-page camera/servo/audio load after a brownout reset.
 
 ## Hardware
 
@@ -64,6 +64,7 @@ The project is configured for:
 - Framework: Arduino
 - MCU: ESP32-S3
 - C++ standard: C++17
+- Partition table: `default_16MB.csv` so the firmware has an OTA update slot
 - PSRAM: QSPI PSRAM enabled by `board_build.arduino.memory_type = qio_qspi`
 
 ## Repository Layout
@@ -235,15 +236,18 @@ The current web UI supports:
 - Volume presets `quiet`, `normal`, and `loud`.
 - Sleep and wake actions.
 - Servo actions `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, `dance`, and `release`.
+- Live MJPEG preview from the current foreground camera session. The stream mirrors an already-running camera session; it does not start camera capture by itself.
+- Firmware OTA upload by selecting a `.bin` image built for this environment. A successful upload switches the boot slot and reboots.
 - Listing, opening, and deleting saved JPEG photos.
 
 ## Known Limitations
 
 - The current face detector is only a heuristic skin-color blob detector. It can assist rough centering, but it is not a real ML face detector and should not be described as face recognition.
-- Photo face tracking is still open-loop servo correction around heuristic boxes. It is useful for demo centering, not robust computer vision.
+- Photo face tracking is still open-loop servo correction around heuristic boxes. It is useful for rough centering, not robust computer vision.
 - AI Vision requires a XiaoZhi-provided vision endpoint.
 - CoreS3 built-in microphone and speaker are half-duplex. Full-duplex interruption and echo cancellation are not implemented.
-- The web control page is local HTTP on the same LAN and is not authenticated. Use it only on trusted networks.
+- The web camera preview reuses the current foreground camera session and does not independently open the camera in the background.
+- The web control page and local OTA upload are plain HTTP on the same LAN and are not authenticated. Use them only on trusted networks, and only flash images built for the same 16 MB partition layout.
 - Brightness and volume presets are runtime-only and reset to `normal` plus `normal` after reboot.
 - SD card behavior depends on card format, contact, and power stability. The firmware retries SD init at 25, 10, 4, and 1 MHz.
 - Servo expression and XiaoZhi control are open-loop pose control with rate limiting. They are not PID gimbal control or autonomous base motion.
@@ -258,6 +262,8 @@ The current web UI supports:
 - XiaoZhi disconnects after MCP: confirm `initialize`, `tools/list`, and `sent listen start` appear in order.
 - No AI reply: confirm Wi-Fi is connected and serial logs show `WS connected`, `session_id`, `sent listen start`, `stt`, and `tts`.
 - AI Vision says endpoint missing: the XiaoZhi session did not provide vision capability data.
+- Web preview is blank: the web stream only mirrors an already-running foreground camera session, so open Camera Debug or AI Vision on the device first. If camera start recently failed several times, wait for the cooldown to expire before retrying.
+- Web OTA says `No OTA partition` or upload fails: confirm the build uses `board_build.partitions = default_16MB.csv`, upload the `.bin` built for `[env:m5stack-cores3]`, and keep power stable until the device reboots.
 - SD not found: format the card as FAT/FAT32 and check logs for `SD.begin failed`, `CARD_NONE`, `Root open failed`, or `Probe write failed`.
 - Servo logs say `PCA9685 not found` or `disabled`: check PortA wiring, PCA9685 address jumpers, external servo power, and common ground. After three failed scans the firmware stops polling the missing PCA9685.
 - PCA9685 LED briefly turns off or servos buzz under fast two-axis motion: use a stronger external servo supply, shorten or thicken power wiring, verify common ground, and avoid mechanical end stops.

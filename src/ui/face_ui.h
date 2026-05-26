@@ -33,6 +33,14 @@ public:
     void setStatusText(const char* text, uint16_t color = 0x7BEF, unsigned long ttlMs = 0);
     void clearStatusText();
 
+    int getEmotion() const { return currentEmotion_; }
+    float getGazeX() const { return gazeX_; }
+    float getGazeY() const { return gazeY_; }
+    bool getBlinking() const { return isBlinking_; }
+    bool getSpeaking() const { return speakingMouthOpen_; }
+    float getMouthOpen() const { return mouthOpenAmount_; }
+    void triggerBlink();
+
 private:
     void drawFace();
     void drawEyes(int centerX, int centerY);
