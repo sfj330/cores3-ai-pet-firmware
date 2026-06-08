@@ -11,6 +11,7 @@
 #include "app/gesture_manager.h"
 #include "app/event_bus.h"
 #include "app/affinity_manager.h"
+#include "app/memo_manager.h"
 #include "app/system_status.h"
 #include "ui/face_ui.h"
 #include "ui/menu_ui.h"
@@ -21,6 +22,7 @@
 #include "ui/affinity_ui.h"
 #include "ui/settings_ui.h"
 #include "ui/album_ui.h"
+#include "ui/memo_ui.h"
 #include "ui/ui_theme.h"
 #include "audio/music_manager.h"
 #include "servo/servo_controller.h"
@@ -47,6 +49,7 @@ MusicUI gMusicUI;
 AffinityUI gAffinityUI;
 SettingsUI gSettingsUI;
 AlbumUI gAlbumUI;
+MemoUI gMemoUI;
 CameraManager gCameraManager;
 FaceDetector gFaceDetector;
 FaceTracker gFaceTracker;
@@ -62,6 +65,7 @@ ServoController gServoController;
 ServoMotionController gServoMotionController;
 FaceTrackingController gFaceTrackingController;
 AffinityManager gAffinityManager;
+MemoManager gMemoManager;
 
 static float gCurrentFps = 0.0f;
 static unsigned long gLastFpsCalc = 0;
@@ -111,7 +115,10 @@ enum class PendingAiTool : uint8_t {
     PET_REACT,
     SERVO_CONTROL,
     DEVICE_STATUS,
-    DEVICE_CONTROL
+    DEVICE_CONTROL,
+    MEMO_ADD,
+    MEMO_LIST,
+    MEMO_REMOVE
 };
 
 enum class MusicAction : uint8_t {
@@ -153,7 +160,8 @@ enum class DevicePageAction : uint8_t {
     CAMERA,
     MUSIC,
     POMODORO,
-    AI
+    AI,
+    MEMO
 };
 
 enum class DeviceSleepAction : uint8_t {
@@ -179,6 +187,12 @@ static volatile MusicAction gPendingAiMusicAction = MusicAction::NONE;
 static volatile PetReaction gPendingAiPetReaction = PetReaction::NONE;
 static volatile ServoAiAction gPendingAiServoAction = ServoAiAction::NONE;
 static String gPendingAiStringParam = "";
+static int gPendingMemoRemoveId = 0;
+static unsigned long gLastMemoCheckMs = 0;
+static bool gMemoRemindActive = false;
+static unsigned long gMemoRemindUntilMs = 0;
+static String gMemoRemindText;
+static unsigned long gMemoNextRemindAtMs = 0;
 static DeviceControlRequest gPendingDeviceControl;
 
 static AppStateEnum gPomodoroReturnTo = AppStateEnum::MENU;
@@ -447,7 +461,7 @@ static bool navigateDevicePage(DevicePageAction page) {
     switch (page) {
         case DevicePageAction::FACE:
             if (current == AppStateEnum::AI) {
-                gXiaoZhiClient.closeAudioChannel();
+                gXiaoZhiClient.pauseForForegroundTool();
             }
             appState.setState(AppStateEnum::FACE);
             return true;
@@ -474,6 +488,9 @@ static bool navigateDevicePage(DevicePageAction page) {
         case DevicePageAction::AI:
             appState.setState(AppStateEnum::AI);
             return true;
+        case DevicePageAction::MEMO:
+            appState.setState(AppStateEnum::MEMO);
+            return true;
         case DevicePageAction::NONE:
         default:
             return false;
@@ -490,6 +507,7 @@ static String devicePageLabel(DevicePageAction page) {
         case DevicePageAction::MUSIC: return "音乐页";
         case DevicePageAction::POMODORO: return "番茄钟";
         case DevicePageAction::AI: return "小智页";
+        case DevicePageAction::MEMO: return "备忘录";
         case DevicePageAction::NONE:
         default:
             return "";
@@ -557,6 +575,23 @@ static void updateAffinityUiData() {
                          gAffinityManager.levelName(),
                          gAffinityManager.moodName(),
                          gAffinityManager.recent().c_str());
+}
+
+static void updateMemoUiData() {
+    MemoDisplayEntry memos[MAX_MEMO_COUNT];
+    int cnt = gMemoManager.count();
+    time_t wallNow;
+    time(&wallNow);
+    uint32_t now32 = static_cast<uint32_t>(wallNow);
+    for (int i = 0; i < cnt && i < MAX_MEMO_COUNT; ++i) {
+        const MemoEntry* e = gMemoManager.entry(i);
+        if (e) {
+            strncpy(memos[i].text, e->text, 60);
+            memos[i].text[60] = '\0';
+            memos[i].remindAt = e->remindAt;
+        }
+    }
+    gMemoUI.setMemos(memos, cnt, now32);
 }
 
 static void addAffinity(int delta, const char* reason) {
@@ -1041,6 +1076,10 @@ void uiTask(void* pvParameters) {
                     gAlbumUI.update();
                     break;
 
+                case AppStateEnum::MEMO:
+                    gMemoUI.update();
+                    break;
+
                 case AppStateEnum::SLEEP:
                     break;
             }
@@ -1222,9 +1261,7 @@ void aiTask(void* pvParameters) {
         if (gNeedOpenAudioChannel) {
             gNeedOpenAudioChannel = false;
             Serial.println("AI task: opening audio channel...");
-            if (gXiaoZhiClient.openAudioChannel()) {
-                gXiaoZhiClient.startListening();
-            }
+            gXiaoZhiClient.openAudioChannel();  // non-blocking, process() drives completion
         }
 
         vTaskDelay(delayTicks);
@@ -1351,6 +1388,7 @@ static DevicePageAction parseDevicePageArg(const String& page) {
     if (value == "music") return DevicePageAction::MUSIC;
     if (value == "pomodoro") return DevicePageAction::POMODORO;
     if (value == "ai") return DevicePageAction::AI;
+    if (value == "memo") return DevicePageAction::MEMO;
     return DevicePageAction::NONE;
 }
 
@@ -1534,6 +1572,23 @@ static void handleXiaoZhiTranscriptLegacy(const String& text) {
             gPendingAiPetReaction = PetReaction::HAPPY;
         }
         Serial.println("AI transcript fallback: pet react");
+    } else if (containsAny(text, "提醒我", "备忘", "记住")) {
+        gPendingAiTool = PendingAiTool::MEMO_ADD;
+        gPendingAiCallId = -1;
+        // Extract text after the keyword as memo content
+        int idx = -1;
+        if ((idx = text.indexOf("提醒我")) >= 0) {
+            gPendingAiStringParam = text.substring(idx + 3);
+        } else if ((idx = text.indexOf("备忘")) >= 0) {
+            gPendingAiStringParam = text.substring(idx + 2);
+        } else if ((idx = text.indexOf("记住")) >= 0) {
+            gPendingAiStringParam = text.substring(idx + 2);
+        }
+        gPendingAiStringParam.trim();
+        if (gPendingAiStringParam.length() == 0) {
+            gPendingAiStringParam = text;
+        }
+        Serial.println("AI transcript fallback: memo add");
     } else if (asksOpen) {
         gPendingAiTool = PendingAiTool::CAMERA_OPEN;
         gPendingAiCallId = -1;
@@ -2118,6 +2173,135 @@ static void processServoControl(int callId) {
     Serial.printf("AI servo control: %s ok=%d\n", servoAiActionName(action), ok ? 1 : 0);
 }
 
+static void checkMemoReminders(unsigned long now) {
+    // Check every 1 second
+    if (now - gLastMemoCheckMs < 1000) return;
+    gLastMemoCheckMs = now;
+
+    time_t wallNow;
+    time(&wallNow);
+    uint32_t now32 = static_cast<uint32_t>(wallNow);
+
+    // Don't check if wall clock not synced
+    if (now32 < 1700000000) return;
+
+    // If currently showing a reminder, wait for it to finish
+    if (gMemoRemindActive && now < gMemoRemindUntilMs) return;
+    if (gMemoRemindActive && now >= gMemoRemindUntilMs) {
+        gMemoRemindActive = false;
+        // Wait interval between multiple reminders
+        if (gMemoNextRemindAtMs > 0 && now < gMemoNextRemindAtMs) return;
+        gMemoNextRemindAtMs = 0;
+    }
+
+    MemoEntry due[4];
+    int dueCount = 0;
+    gMemoManager.checkDueReminders(now32, due, 4, dueCount);
+
+    if (dueCount == 0) return;
+
+    // Process first due reminder
+    MemoEntry& e = due[0];
+    gMemoRemindActive = true;
+    gMemoRemindUntilMs = now + MEMO_REMIND_DISPLAY_MS;
+    gMemoRemindText = String("提醒：") + String(e.text);
+
+    // Set surprised emotion and status text
+    AppState::instance().setEmotion(FaceEmotion::SURPRISED);
+    gFaceUI.setStatusText(gMemoRemindText.c_str(), UiTheme::AMBER, MEMO_REMIND_DISPLAY_MS);
+
+    // Play short beep
+    M5.Speaker.tone(MEMO_REMIND_BEEP_FREQ, MEMO_REMIND_BEEP_MS);
+
+    // Clear the reminder (one-shot)
+    gMemoManager.clearReminder(e.id);
+
+    // If more reminders pending, set interval
+    if (dueCount > 1) {
+        gMemoNextRemindAtMs = now + MEMO_REMIND_INTERVAL_MS;
+    }
+
+    Serial.printf("Memo reminder: %s\n", e.text);
+}
+
+static void processMemoAdd(int callId) {
+    String text = gPendingAiStringParam;
+    gPendingAiStringParam = "";
+    int remindMinutes = gPendingAiIntParam;
+    gPendingAiIntParam = 0;
+
+    if (text.length() == 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录内容为空", true);
+        return;
+    }
+
+    uint32_t remindAt = 0;
+    if (remindMinutes > 0) {
+        // Use wall clock if NTP synced
+        time_t now;
+        time(&now);
+        if (now > 1700000000) {  // NTP synced (after 2023)
+            remindAt = static_cast<uint32_t>(now) + static_cast<uint32_t>(remindMinutes * 60);
+        } else {
+            remindAt = static_cast<uint32_t>(millis() / 1000) + static_cast<uint32_t>(remindMinutes * 60);
+        }
+    }
+
+    if (!gMemoManager.add(text.c_str(), remindAt)) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录已满，请先删除旧条目", true);
+        return;
+    }
+
+    String result = "已添加备忘录：" + text;
+    if (remindMinutes > 0) {
+        result += "，" + String(remindMinutes) + "分钟后提醒";
+    }
+    gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
+    addAffinity(2, "Memo added");
+    Serial.printf("Memo added: %s, remind=%dmin\n", text.c_str(), remindMinutes);
+}
+
+static void processMemoList(int callId) {
+    int cnt = gMemoManager.count();
+    if (cnt == 0) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, "当前没有备忘录", false);
+        return;
+    }
+
+    String result;
+    time_t wallNow;
+    time(&wallNow);
+    uint32_t now32 = static_cast<uint32_t>(wallNow);
+
+    for (int i = 0; i < cnt; ++i) {
+        const MemoEntry* e = gMemoManager.entry(i);
+        if (!e) continue;
+        if (i > 0) result += " ";
+        result += String(e->id) + "." + String(e->text);
+        if (e->remindAt > 0 && now32 > 1700000000) {
+            int32_t remaining = static_cast<int32_t>(e->remindAt - now32);
+            if (remaining > 0) {
+                remaining /= 60;
+                result += "(" + String(remaining) + "m)";
+            } else {
+                result += "(到期)";
+            }
+        }
+    }
+    gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
+}
+
+static void processMemoRemove(int callId) {
+    int id = gPendingMemoRemoveId;
+    gPendingMemoRemoveId = 0;
+
+    if (gMemoManager.remove(static_cast<uint8_t>(id))) {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, "已删除备忘录", false);
+    } else {
+        gXiaoZhiClient.queueMcpToolTextResult(callId, "未找到该备忘录", true);
+    }
+}
+
 static void processPendingAiTool() {
     PendingAiTool tool = gPendingAiTool;
     if (tool == PendingAiTool::NONE) return;
@@ -2157,6 +2341,15 @@ static void processPendingAiTool() {
             break;
         case PendingAiTool::DEVICE_CONTROL:
             processDeviceControl(callId);
+            break;
+        case PendingAiTool::MEMO_ADD:
+            processMemoAdd(callId);
+            break;
+        case PendingAiTool::MEMO_LIST:
+            processMemoList(callId);
+            break;
+        case PendingAiTool::MEMO_REMOVE:
+            processMemoRemove(callId);
             break;
         default:
             break;
@@ -2357,6 +2550,37 @@ static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst argumen
         return;
     }
 
+    if (toolName == "self.memo.add") {
+        String text;
+        int remindMinutes = 0;
+        if (!arguments.isNull()) {
+            text = arguments["text"] | "";
+            remindMinutes = arguments["remind_minutes"] | 0;
+        }
+        gPendingAiTool = PendingAiTool::MEMO_ADD;
+        gPendingAiCallId = callId;
+        gPendingAiStringParam = text;
+        gPendingAiIntParam = remindMinutes;
+        return;
+    }
+
+    if (toolName == "self.memo.list") {
+        gPendingAiTool = PendingAiTool::MEMO_LIST;
+        gPendingAiCallId = callId;
+        return;
+    }
+
+    if (toolName == "self.memo.remove") {
+        int id = 0;
+        if (!arguments.isNull()) {
+            id = arguments["id"] | 0;
+        }
+        gPendingAiTool = PendingAiTool::MEMO_REMOVE;
+        gPendingAiCallId = callId;
+        gPendingMemoRemoveId = id;
+        return;
+    }
+
     gXiaoZhiClient.queueMcpToolTextResult(callId, "Unknown CoreS3 tool: " + toolName, true);
 }
 
@@ -2389,6 +2613,9 @@ static void gestureEventHandler(const GestureEvent& event) {
                     requestFaceVisionBurst(millis(), FACE_VISION_TOUCH_BURST_MS, "face up swipe");
                     gSettingsUI.setBrightness(static_cast<int>(gUserBrightnessLevel));
                     gSettingsUI.setVolume(static_cast<int>(gUserVolumeLevel));
+                    gSettingsUI.setBattery(gPowerManager.getVoltage(),
+                                           gPowerManager.getPercentage(),
+                                           gPowerManager.isLowBattery());
                     appState.setState(AppStateEnum::SETTINGS);
                     break;
                 case GestureType::SINGLE_TAP:
@@ -2414,7 +2641,7 @@ static void gestureEventHandler(const GestureEvent& event) {
         case AppStateEnum::AI:
             switch (event.type) {
                 case GestureType::RIGHT_SWIPE:
-                    gXiaoZhiClient.closeAudioChannel();
+                    gXiaoZhiClient.pauseForForegroundTool();
                     appState.setState(AppStateEnum::FACE);
                     break;
                 case GestureType::SINGLE_TAP:
@@ -2452,6 +2679,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                         case 3: gMusicReturnTo = AppStateEnum::MENU; appState.setState(AppStateEnum::MUSIC); break;
                         case 4: appState.setState(AppStateEnum::SYSTEM_INFO); break;
                         case 5: appState.setState(AppStateEnum::ALBUM); break;
+                        case 6: appState.setState(AppStateEnum::MEMO); break;
                     }
                     break;
                 }
@@ -2459,6 +2687,12 @@ static void gestureEventHandler(const GestureEvent& event) {
             switch (event.type) {
                 case GestureType::LEFT_SWIPE:
                     appState.setState(AppStateEnum::FACE);
+                    break;
+                case GestureType::UP_SWIPE:
+                    gMenuUI.nextPage();
+                    break;
+                case GestureType::DOWN_SWIPE:
+                    gMenuUI.prevPage();
                     break;
                 default:
                     break;
@@ -2695,6 +2929,18 @@ static void gestureEventHandler(const GestureEvent& event) {
             break;
         }
 
+        case AppStateEnum::MEMO: {
+            if (event.type == GestureType::SINGLE_TAP) {
+                MemoHitZone hit = gMemoUI.hitTest(event.endX, event.endY);
+                if (hit == MemoHitZone::MEMO_HIT_BACK) {
+                    appState.setState(AppStateEnum::MENU);
+                }
+            } else if (event.type == GestureType::LEFT_SWIPE) {
+                appState.setState(AppStateEnum::MENU);
+            }
+            break;
+        }
+
         case AppStateEnum::SLEEP:
             switch (event.type) {
                 case GestureType::SINGLE_TAP:
@@ -2737,6 +2983,9 @@ static void stateChangeHandler(AppStateEnum state) {
     }
     if (state != AppStateEnum::ALBUM) {
         gAlbumUI.hide();
+    }
+    if (state != AppStateEnum::MEMO) {
+        gMemoUI.hide();
     }
 
     switch (state) {
@@ -2941,6 +3190,12 @@ static void stateChangeHandler(AppStateEnum state) {
             gStorageManager.ensureReady();
             gAlbumUI.scanPhotos();
             gAlbumUI.show();
+            break;
+
+        case AppStateEnum::MEMO:
+            gMenuUI.hide();
+            gMemoUI.show();
+            updateMemoUiData();
             break;
 
         case AppStateEnum::SLEEP:
@@ -3379,6 +3634,7 @@ void setup() {
     gAffinityUI.begin();
     gSettingsUI.begin();
     gAlbumUI.begin();
+    gMemoUI.begin();
     gServoMotionController.attach(gServoController);
     gPomodoroUI.setCompleteCallback(handlePomodoroComplete);
 
@@ -3393,6 +3649,7 @@ void setup() {
     bootStep(sdOk ? "SD ready" : "SD not found (will retry)", 7);
 
     gAffinityManager.begin();
+    gMemoManager.begin();
 
     bootStep("IMU Orientation...", 8);
     gImuOrientation.begin();
@@ -3454,6 +3711,7 @@ void setup() {
             else if (page == "pomodoro") action = DevicePageAction::POMODORO;
             else if (page == "ai") action = DevicePageAction::AI;
             else if (page == "album") { AppState::instance().setState(AppStateEnum::ALBUM); return true; }
+            else if (page == "memo") action = DevicePageAction::MEMO;
             if (action == DevicePageAction::NONE) return false;
             return navigateDevicePage(action);
         };
@@ -3697,6 +3955,7 @@ void loop() {
         }
     }
 
+    checkMemoReminders(now);
     processForegroundCameraStart();
     updateFaceVisionRuntime(now);
 
@@ -3731,7 +3990,6 @@ void loop() {
             AppState::instance().setEmotion(FaceEmotion::SURPRISED);
             gSickActive = true;
             gSickUntil = now + 1500;
-            M5.Speaker.tone(800, 100);
             Serial.println("Shake wake from sleep");
         }
     }
@@ -3754,7 +4012,6 @@ void loop() {
                 AppState::instance().setEmotion(FaceEmotion::SURPRISED);
                 gFaceUI.setTemporaryGaze(0.0f, -0.3f, 1500);
                 gServoMotionController.command(ServoMotionAction::NOD);
-                M5.Speaker.tone(1200, 80);
                 Serial.println("Shake -> SURPRISED");
             }
             gSickActive = true;

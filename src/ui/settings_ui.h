@@ -26,6 +26,7 @@ public:
 
     void setBrightness(int level);
     void setVolume(int level);
+    void setBattery(float voltage, float percentage, bool lowBattery);
 
     SettingsHitZone hitTest(int x, int y) const;
 
@@ -33,6 +34,7 @@ private:
     void drawBackButton();
     void drawBrightnessRow();
     void drawVolumeRow();
+    void drawBatteryRow();
     void drawSliderBar(int x, int y, int w, int activeIndex, int count,
                        const char* labels[], uint16_t color);
 
@@ -43,4 +45,10 @@ private:
 
     int brightnessLevel_ = 2;
     int volumeLevel_ = 1;
+
+    float batteryVoltage_ = 0;
+    int batteryPercent_ = 0;
+    bool batteryLow_ = false;
+
+    static constexpr int BATTERY_ROW_Y = 200;
 };

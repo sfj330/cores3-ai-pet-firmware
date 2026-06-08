@@ -144,10 +144,22 @@ constexpr uint8_t MUSIC_SPEAKER_VOLUME = 64;
 constexpr unsigned long DANCE_MUSIC_START_DELAY_MS = 900;
 constexpr bool BOOT_CHIME_ENABLED = false;
 
+// ==================== Menu ====================
+constexpr int MENU_PAGE_SIZE = 6;
+
 // ==================== Affinity ====================
 constexpr int AFFINITY_DEFAULT_VALUE = 35;
 constexpr int AFFINITY_MIN_VALUE = 0;
 constexpr int AFFINITY_MAX_VALUE = 100;
+
+// ==================== Memo ====================
+constexpr int MAX_MEMO_COUNT = 8;
+constexpr int MAX_MEMO_TEXT_LEN = 60;
+constexpr unsigned long MEMO_REMIND_DISPLAY_MS = 5000;
+constexpr unsigned long MEMO_REMIND_BEEP_FREQ = 440;
+constexpr unsigned long MEMO_REMIND_BEEP_MS = 200;
+constexpr unsigned long MEMO_REMIND_INTERVAL_MS = 2000;
+constexpr int MEMO_UI_DISPLAY_COUNT = 4;
 
 // ==================== Task Priorities ====================
 constexpr bool SERIAL_DIAGNOSTIC_HEARTBEAT = false;

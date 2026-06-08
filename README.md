@@ -24,6 +24,12 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - XiaoZhi AI: OTA activation and config, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake and tools, device status query, and device control for page switching, brightness, volume, and sleep or wake. Recent playback tuning increases speaker queue depth and decode recovery to make TTS more resilient.
 - Web control: when Wi-Fi is connected, the firmware starts a lightweight HTTP control page that shows status, switches pages, adjusts brightness and volume, sends servo actions, streams the current camera session, uploads OTA firmware, and browses or deletes saved photos.
 - Power: battery voltage reads through `M5.Power.getBatteryVoltage()`. Low battery reminders can push the Face page to `SLEEPY`, and if voltage stays below 3.2 V for 30 seconds the device enters timed deep sleep to protect the battery. Brownout safe mode still reduces automatic Face-page camera/servo/audio load after a brownout reset.
+- Memo/Reminder: NVS-persisted memos (up to 8 entries, 60 chars each) with optional timed reminders. Accessible from the Menu page and through XiaoZhi MCP tools (`self.memo.add`, `self.memo.list`, `self.memo.remove`). Due reminders display on the Face page with a beep alert.
+- Menu paging: the Menu now supports 7 apps (Wi-Fi, Camera, Timer, Music, System, Album, Memo) with 6 icons per page, swipe up/down to page, and page indicator dots.
+- Battery display in Settings: the Settings page now shows battery voltage, percentage, and low-battery warning.
+- Non-blocking WebSocket connection: XiaoZhi WebSocket connection is now a non-blocking state machine (IDLE→CONNECTING→WAITING_HELLO→READY/FAILED) instead of blocking the AI task. DNS pre-check fails fast on resolution failure.
+- Audio buffer optimization: mic capture and Opus encode buffers use INTERNAL RAM for DMA stability; playback buffers use PSRAM. Opus encoder tuned to complexity=5 with VBR enabled. Speaker DMA buffer count increased to 16.
+- AI page swipe optimization: right-swiping from AI page now uses `pauseForForegroundTool()` instead of `closeAudioChannel()`, preserving the WebSocket connection for faster re-entry. Long press still fully closes the channel.
 
 ## Hardware
 
@@ -73,7 +79,7 @@ The project is configured for:
 docs/        # Learning guide, architecture notes, troubleshooting
 src/
 |- main.cpp
-|- app/        # State machine, gestures, affinity, event bus, shared status snapshot
+|- app/        # State machine, gestures, affinity, memo, event bus, shared status snapshot
 |- ai/         # XiaoZhi activation, WebSocket, Opus audio, MCP
 |- audio/      # SD MP3/WAV music player
 |- config/     # Firmware constants and Wi-Fi secret template
@@ -81,7 +87,7 @@ src/
 |- power/      # Sleep state and battery voltage reporting
 |- servo/      # PCA9685 driver and shared servo motion layer
 |- storage/    # SD card probing, photo paths, file writes, file deletion
-|- ui/         # Face, menu, camera, Pomodoro, system, music, affinity, settings, album UI
+|- ui/         # Face, menu, camera, Pomodoro, system, music, affinity, settings, album, memo UI
 `- vision/     # Camera manager, heuristic face detector, tracker, IMU orientation
 ```
 
@@ -154,7 +160,7 @@ pio device monitor -p COM5 -b 115200
 - Face page: right swipe opens Menu, left swipe or double tap enters XiaoZhi AI, down swipe opens Bond, up swipe opens Settings, tap top/bottom/left/right changes expression and head pose, shake and twist gestures trigger IMU reactions, and long press enters Sleep.
 - AI page: single tap toggles listening, right swipe or long press returns to Face.
 - Bond page: Back, up swipe, or left swipe returns to Face.
-- Menu page: tap an icon to open Wi-Fi, Camera, Timer, Music, System, or Album. Back returns to Face.
+- Menu page: 7 apps (Wi-Fi, Camera, Timer, Music, System, Album, Memo) with 6 icons per page. Swipe up/down to page between icon pages, page indicator dots shown at the bottom. Tap an icon to open the app. Back returns to Face.
 - Settings page: tap `Low`, `Mid`, or `High` under Brightness and Volume to apply runtime presets. Back, left swipe, or down swipe returns to Face.
 - Camera Debug: `SHOT` saves `/photos/IMG_####.jpg`. If the heuristic detector finds a plausible face region, the firmware briefly tries to center it with the servos before capture. Back or left swipe returns to Menu.
 - AI Vision: Back button or right swipe closes preview and returns to XiaoZhi AI. Long press closes preview, shuts the audio channel, and returns to Face.
@@ -163,6 +169,7 @@ pio device monitor -p COM5 -b 115200
 - Album: in grid view, tap a thumbnail to open it, up/down swipe to page through thumbnails, and left swipe or Back to return to Menu. In full view, left swipe moves forward, right swipe moves back or returns to the grid at the first photo, and Delete or long press removes the current photo.
 - System: shows Wi-Fi, SD, Audio, Control, and Memory rows, while the subtitle summarizes XiaoZhi and Vision readiness. Back returns to Menu.
 - Sleep: tap or double tap wakes the device back to the Face page.
+- Memo: shows memo list with countdown timers for reminders. Back returns to Menu.
 
 ## SD Card Content
 
@@ -212,6 +219,9 @@ self.pet.react
 self.servo.control
 self.device.status
 self.device.control
+self.memo.add
+self.memo.list
+self.memo.remove
 ```
 
 AI Vision depends on the vision endpoint and token delivered by the XiaoZhi service. It is not a local embedded vision pipeline.
@@ -220,9 +230,11 @@ AI Vision depends on the vision endpoint and token delivered by the XiaoZhi serv
 
 `self.device.status` accepts `detail=brief|full`. `brief` returns two short Chinese sentences covering Wi-Fi and SD first, then Music, AI, and Vision. `full` appends heap and PSRAM information.
 
-`self.device.control` supports optional `page`, `brightness`, `volume`, and `sleep` fields. Supported pages are `face`, `menu`, `wifi`, `system`, `camera`, `music`, `pomodoro`, and `ai`. Brightness presets are `dim`, `normal`, and `bright`. Volume presets are `quiet`, `normal`, and `loud`. Sleep supports `wake` and `sleep`. Wake restores the last non-sleep brightness preference instead of hard-coding full brightness. The current MCP schema does not expose the new Album page.
+`self.device.control` supports optional `page`, `brightness`, `volume`, and `sleep` fields. Supported pages are `face`, `menu`, `wifi`, `system`, `camera`, `music`, `pomodoro`, `ai`, and `memo`. Brightness presets are `dim`, `normal`, and `bright`. Volume presets are `quiet`, `normal`, and `loud`. Sleep supports `wake` and `sleep`. Wake restores the last non-sleep brightness preference instead of hard-coding full brightness. The current MCP schema does not expose the new Album page.
 
 Transcript fallback also recognizes common Chinese commands for status query, opening the System, Music, Camera, and Pomodoro pages, returning to the home page, adjusting brightness, adjusting volume, and sleep or wake requests.
+
+The WebSocket connection uses a non-blocking state machine (IDLE→CONNECTING→WAITING_HELLO→READY/FAILED) instead of blocking the AI task. A DNS pre-check fails fast on resolution failure, so the AI page remains responsive during connection attempts.
 
 ## Web Control
 
@@ -252,6 +264,7 @@ The current web UI supports:
 - SD card behavior depends on card format, contact, and power stability. The firmware retries SD init at 25, 10, 4, and 1 MHz.
 - Servo expression and XiaoZhi control are open-loop pose control with rate limiting. They are not PID gimbal control or autonomous base motion.
 - Bond details such as recent interaction text are still runtime-only even though the main affinity score persists.
+- Memo reminders require NTP time sync; if NTP is not synced, reminder times are relative to device boot time.
 
 ## Troubleshooting
 

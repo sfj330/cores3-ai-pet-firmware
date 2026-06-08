@@ -4,12 +4,9 @@
 #include <cmath>
 
 namespace {
-struct AppLayout {
-    int cx;
-    int y;
-};
 
-constexpr AppLayout APP_LAYOUT[MenuUI::APP_COUNT] = {
+// Positions for a single page (3 columns x 2 rows)
+constexpr AppLayout PAGE_LAYOUT[MenuUI::PAGE_SIZE] = {
     {58, 44},
     {160, 44},
     {262, 44},
@@ -26,6 +23,7 @@ const char* appTitle(int index) {
         case 3: return "Music";
         case 4: return "System";
         case 5: return "Album";
+        case 6: return "Memo";
         default: return "";
     }
 }
@@ -38,6 +36,7 @@ uint16_t appAccent(int index, bool wifiConnected) {
         case 3: return UiTheme::BLUE;
         case 4: return UiTheme::GREEN;
         case 5: return UiTheme::CYAN;
+        case 6: return UiTheme::AMBER;
         default: return UiTheme::CYAN;
     }
 }
@@ -64,9 +63,12 @@ void MenuUI::hide() {
 }
 
 int MenuUI::appAt(int x, int y) const {
-    for (int i = 0; i < APP_COUNT; ++i) {
-        int appX = APP_LAYOUT[i].cx - APP_W / 2;
-        int appY = APP_LAYOUT[i].y;
+    int startApp = currentPage_ * PAGE_SIZE;
+    int endApp = min(startApp + PAGE_SIZE, APP_COUNT);
+    for (int i = startApp; i < endApp; ++i) {
+        int pageIdx = i - startApp;
+        int appX = PAGE_LAYOUT[pageIdx].cx - APP_W / 2;
+        int appY = PAGE_LAYOUT[pageIdx].y;
         if (x >= appX && x < appX + APP_W && y >= appY && y < appY + APP_H) {
             return i;
         }
@@ -103,36 +105,70 @@ MenuHitZone MenuUI::hitTest(int x, int y) const {
     return appAt(x, y) >= 0 ? MenuHitZone::MENU_HIT_APP : MenuHitZone::MENU_HIT_NONE;
 }
 
+void MenuUI::nextPage() {
+    if (currentPage_ < pageCount() - 1) {
+        currentPage_++;
+        dirty_ = true;
+    }
+}
+
+void MenuUI::prevPage() {
+    if (currentPage_ > 0) {
+        currentPage_--;
+        dirty_ = true;
+    }
+}
+
+int MenuUI::pageCount() const {
+    return (APP_COUNT + PAGE_SIZE - 1) / PAGE_SIZE;
+}
+
+int MenuUI::currentPage() const {
+    return currentPage_;
+}
+
 void MenuUI::update() {
     if (!visible_ || !spriteReady_ || !dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
-    UiTheme::drawTitle(canvas_, "CoreS3 Pet", "Tap an app", UiTheme::CYAN);
-    for (int i = 0; i < APP_COUNT; ++i) {
-        drawApp(i);
+
+    int pages = pageCount();
+    const char* subtitle = (pages > 1) ? "Swipe up/down" : "Tap an app";
+    UiTheme::drawTitle(canvas_, "CoreS3 Pet", subtitle, UiTheme::CYAN);
+
+    int startApp = currentPage_ * PAGE_SIZE;
+    int endApp = min(startApp + PAGE_SIZE, APP_COUNT);
+
+    for (int i = startApp; i < endApp; ++i) {
+        int pageIdx = i - startApp;
+        drawApp(i, PAGE_LAYOUT[pageIdx]);
     }
+
     drawBackButton();
+    if (pages > 1) {
+        drawPageDots();
+    }
 
     canvas_.pushSprite(0, 0);
     dirty_ = false;
 }
 
-void MenuUI::drawApp(int index) {
+void MenuUI::drawApp(int index, AppLayout layout) {
     bool wifiConnected = wifiStatus_ == "Connected";
     uint16_t accent = appAccent(index, wifiConnected);
-    int x = APP_LAYOUT[index].cx - ICON_SIZE / 2;
-    int y = APP_LAYOUT[index].y;
+    int x = layout.cx - ICON_SIZE / 2;
+    int y = layout.y;
 
     drawAppIcon(index, x, y, ICON_SIZE, accent);
 
     canvas_.setTextDatum(TC_DATUM);
     canvas_.setTextSize(1);
     canvas_.setTextColor(UiTheme::TEXT, UiTheme::BG);
-    canvas_.drawString(appTitle(index), APP_LAYOUT[index].cx, y + ICON_SIZE + 9);
+    canvas_.drawString(appTitle(index), layout.cx, y + ICON_SIZE + 9);
 
     if (index == 0) {
         canvas_.setTextColor(wifiConnected ? UiTheme::GREEN : UiTheme::TEXT_DIM, UiTheme::BG);
-        canvas_.drawString(wifiConnected ? "Online" : "Offline", APP_LAYOUT[index].cx, y + ICON_SIZE + 22);
+        canvas_.drawString(wifiConnected ? "Online" : "Offline", layout.cx, y + ICON_SIZE + 22);
     }
     canvas_.setTextDatum(TL_DATUM);
 }
@@ -203,9 +239,35 @@ void MenuUI::drawAppIcon(int index, int x, int y, int size, uint16_t accent) {
                                  x + size - 14, y + size - 12, fg);
             canvas_.fillCircle(x + size - 18, y + 22, 4, fg);
             break;
+        case 6:
+            // Notepad icon
+            canvas_.fillRoundRect(x + 10, y + 8, size - 20, size - 16, 4, fg);
+            canvas_.drawFastHLine(x + 16, y + 18, size - 32, accent);
+            canvas_.drawFastHLine(x + 16, y + 25, size - 32, accent);
+            canvas_.drawFastHLine(x + 16, y + 32, size - 36, accent);
+            canvas_.fillCircle(x + size - 14, y + 12, 4, fg);
+            break;
     }
 }
 
 void MenuUI::drawBackButton() {
     UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+}
+
+void MenuUI::drawPageDots() {
+    int pages = pageCount();
+    int dotR = 3;
+    int gap = 12;
+    int totalW = pages * gap - (gap - dotR * 2);
+    int startX = DISPLAY_WIDTH / 2 - totalW / 2;
+    int y = BACK_Y + BACK_H / 2;
+
+    for (int i = 0; i < pages; ++i) {
+        int cx = startX + i * gap + dotR;
+        if (i == currentPage_) {
+            canvas_.fillCircle(cx, y, dotR, UiTheme::CYAN);
+        } else {
+            canvas_.drawCircle(cx, y, dotR, UiTheme::TEXT_DIM);
+        }
+    }
 }

@@ -84,7 +84,7 @@ bool XiaoZhiClient::ensureAudioBuffers() {
                                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     for (int i = 0; i < PLAYBACK_BUFFER_COUNT; ++i) {
         pcmPlaybackBufs_[i] = (int16_t*)heap_caps_malloc(OPUS_MAX_DECODE_SAMPLES * sizeof(int16_t),
-                                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
     opusEncodeBuf_ = (uint8_t*)heap_caps_malloc(OPUS_MAX_PACKET_BYTES,
                                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -314,7 +314,11 @@ bool XiaoZhiClient::openAudioChannel() {
         return true;
     }
 
-    if (openingAudioChannel_) {
+    if (wsConnectState_ == WsConnectState::CONNECTING || wsConnectState_ == WsConnectState::WAITING_HELLO) {
+        return false;  // already in progress
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        lastError_ = "No WiFi";
         return false;
     }
     unsigned long now = millis();
@@ -332,7 +336,6 @@ bool XiaoZhiClient::openAudioChannel() {
         return false;
     }
 
-    Serial.printf("XiaoZhi: connecting WS to %s\n", webSocketUrl_.c_str());
     wsConnected_ = false;
     serverHelloReceived_ = false;
     audioChannelOpen_ = false;
@@ -387,56 +390,82 @@ bool XiaoZhiClient::openAudioChannel() {
     webSocket_.setReconnectInterval(5000);
     webSocket_.enableHeartbeat(15000, 3000, 2);
 
-    unsigned long startWait = millis();
-    while (!wsConnected_ && millis() - startWait < 10000) {
-        webSocket_.loop();
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
+    Serial.printf("XiaoZhi: WS connecting to %s:%d%s ssl=%d wifi=%d heap=%u psram=%u\n",
+                  wsUrl.c_str(), port, wsPath.c_str(), useSSL ? 1 : 0,
+                  WiFi.status() == WL_CONNECTED ? 1 : 0, ESP.getFreeHeap(), ESP.getFreePsram());
 
-    if (!wsConnected_) {
-        Serial.println("XiaoZhi: WS connect timeout");
-        lastError_ = "WS connect timeout";
-        setState(VoiceState::ERROR);
+    // DNS pre-check
+    IPAddress resolvedIP;
+    if (WiFi.hostByName(wsUrl.c_str(), resolvedIP)) {
+        Serial.printf("XiaoZhi: DNS resolved %s -> %s\n", wsUrl.c_str(), resolvedIP.toString().c_str());
+    } else {
+        Serial.printf("XiaoZhi: DNS resolve FAILED for %s\n", wsUrl.c_str());
+        lastError_ = "DNS failed";
         openingAudioChannel_ = false;
         return false;
     }
 
-    String hello = getHelloMessage();
-    Serial.printf("XiaoZhi: sending hello: %s\n", hello.c_str());
-    webSocket_.sendTXT(hello);
+    wsConnectState_ = WsConnectState::CONNECTING;
+    wsConnectStartMs_ = millis();
+    return true;  // started non-blocking connect
+}
 
-    startWait = millis();
-    while (!serverHelloReceived_ && wsConnected_ && millis() - startWait < 10000) {
-        webSocket_.loop();
-        vTaskDelay(pdMS_TO_TICKS(50));
+void XiaoZhiClient::processWsConnect() {
+    if (wsConnectState_ == WsConnectState::IDLE || wsConnectState_ == WsConnectState::READY) {
+        return;
     }
 
-    if (!serverHelloReceived_) {
-        Serial.println("XiaoZhi: server hello timeout");
-        lastError_ = "Server hello timeout";
-        webSocket_.disconnect();
-        wsConnected_ = false;
-        setState(VoiceState::ERROR);
-        openingAudioChannel_ = false;
-        return false;
+    webSocket_.loop();
+
+    if (wsConnectState_ == WsConnectState::CONNECTING) {
+        if (wsConnected_) {
+            Serial.println("XiaoZhi: WS connected, sending hello");
+            String hello = getHelloMessage();
+            webSocket_.sendTXT(hello);
+            wsConnectState_ = WsConnectState::WAITING_HELLO;
+            wsConnectStartMs_ = millis();
+        } else if (millis() - wsConnectStartMs_ > 15000) {
+            Serial.println("XiaoZhi: WS connect timeout");
+            lastError_ = "WS connect timeout";
+            wsConnectState_ = WsConnectState::FAILED;
+        }
+        return;
     }
 
-    if (!audioInitialized_ || !opusReady_) {
-        Serial.println("XiaoZhi: audio init incomplete after server hello");
-        lastError_ = lastError_.length() > 0 ? lastError_ : String("Audio init failed");
+    if (wsConnectState_ == WsConnectState::WAITING_HELLO) {
+        if (serverHelloReceived_) {
+            if (!audioInitialized_ || !opusReady_) {
+                Serial.println("XiaoZhi: audio init incomplete after server hello");
+                lastError_ = lastError_.length() > 0 ? lastError_ : String("Audio init failed");
+                wsConnectState_ = WsConnectState::FAILED;
+                return;
+            }
+            audioChannelOpen_ = true;
+            openingAudioChannel_ = false;
+            lastAudioOpenAttemptMs_ = 0;
+            lastError_ = "";
+            wsConnectState_ = WsConnectState::READY;
+            Serial.println("XiaoZhi: audio channel open (non-blocking)");
+        } else if (!wsConnected_) {
+            Serial.println("XiaoZhi: WS disconnected while waiting hello");
+            lastError_ = "WS disconnected";
+            wsConnectState_ = WsConnectState::FAILED;
+        } else if (millis() - wsConnectStartMs_ > 10000) {
+            Serial.println("XiaoZhi: server hello timeout");
+            lastError_ = "Server hello timeout";
+            wsConnectState_ = WsConnectState::FAILED;
+        }
+        return;
+    }
+
+    if (wsConnectState_ == WsConnectState::FAILED) {
         webSocket_.disconnect();
         wsConnected_ = false;
         audioChannelOpen_ = false;
         openingAudioChannel_ = false;
         setState(VoiceState::ERROR);
-        return false;
+        wsConnectState_ = WsConnectState::IDLE;
     }
-
-    audioChannelOpen_ = true;
-    openingAudioChannel_ = false;
-    lastAudioOpenAttemptMs_ = 0;
-    lastError_ = "";
-    return true;
 }
 
 void XiaoZhiClient::closeAudioChannel() {
@@ -449,6 +478,7 @@ void XiaoZhiClient::closeAudioChannel() {
     mcpReady_ = false;
     pendingStartListening_ = false;
     pendingStopListening_ = false;
+    wsConnectState_ = WsConnectState::IDLE;
 
     if (audioCaptureTaskHandle_) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -895,6 +925,51 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
         sleepEnum.add("sleep");
     }
 
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.memo.add";
+        t["description"] = "添加备忘录。当用户说提醒我、备忘、记住某事时调用。remind_minutes 为提醒倒计时分钟数，0或不填表示不提醒。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+
+        JsonObject textParam = p["text"].to<JsonObject>();
+        textParam["type"] = "string";
+        textParam["description"] = "备忘录内容";
+
+        JsonObject remindMinutes = p["remind_minutes"].to<JsonObject>();
+        remindMinutes["type"] = "integer";
+        remindMinutes["description"] = "N分钟后提醒，0或不填表示不提醒";
+
+        JsonArray required = s["required"].to<JsonArray>();
+        required.add("text");
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.memo.list";
+        t["description"] = "查询当前所有备忘录列表。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        s["properties"].to<JsonObject>();
+    }
+
+    {
+        JsonObject t = tools.add<JsonObject>();
+        t["name"] = "self.memo.remove";
+        t["description"] = "删除指定ID的备忘录。";
+        JsonObject s = t["inputSchema"].to<JsonObject>();
+        s["type"] = "object";
+        JsonObject p = s["properties"].to<JsonObject>();
+
+        JsonObject idParam = p["id"].to<JsonObject>();
+        idParam["type"] = "integer";
+        idParam["description"] = "要删除的备忘录ID";
+
+        JsonArray required = s["required"].to<JsonArray>();
+        required.add("id");
+    }
+
     String resultJson;
     serializeJson(result, resultJson);
     sendMcpResult(id, resultJson);
@@ -1084,7 +1159,7 @@ bool XiaoZhiClient::startSpeaker() {
     auto spk_cfg = M5.Speaker.config();
     spk_cfg.sample_rate = serverSampleRate_ > 0 ? serverSampleRate_ : 24000;
     spk_cfg.stereo = false;
-    spk_cfg.dma_buf_count = 12;
+    spk_cfg.dma_buf_count = 16;
     spk_cfg.dma_buf_len = 512;
     spk_cfg.task_priority = 5;
     M5.Speaker.config(spk_cfg);
@@ -1092,9 +1167,10 @@ bool XiaoZhiClient::startSpeaker() {
     if (speakerActive_) {
         resetPlaybackQueueState();
         M5.Speaker.setVolume(ttsVolume_);
-        memset(pcmPlaybackBufs_[0], 0, 960 * sizeof(int16_t));
-        M5.Speaker.playRaw(pcmPlaybackBufs_[0], 960, spk_cfg.sample_rate, false, 1, XIAOZHI_SPEAKER_CHANNEL, false);
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Short silence frame on stack to stabilize DAC (20ms@24kHz)
+        int16_t silenceBuf[480] = {};
+        M5.Speaker.playRaw(silenceBuf, 480, spk_cfg.sample_rate, false, 1, XIAOZHI_SPEAKER_CHANNEL, false);
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
     if (!speakerActive_) {
         Serial.println("XiaoZhi: speaker begin failed");
@@ -1182,6 +1258,7 @@ bool XiaoZhiClient::initOpusCodec() {
     opus_encoder_ctl(opusEncoder_, OPUS_SET_BITRATE(OPUS_BITRATE));
     opus_encoder_ctl(opusEncoder_, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
     opus_encoder_ctl(opusEncoder_, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    opus_encoder_ctl(opusEncoder_, OPUS_SET_VBR(1));
 
     err = OPUS_OK;
     opusDecoder_ = opus_decoder_create(serverSampleRate_, AUDIO_CHANNELS, &err);
@@ -1344,19 +1421,19 @@ void XiaoZhiClient::process() {
         pendingStartListening_ = false;
         listenRequested_ = true;
         if (activated_ && !audioChannelOpen_) {
-            if (!openAudioChannel()) {
-                listenRequested_ = false;
-                listenStarted_ = false;
-                audioCaptureRunning_ = false;
-                if (lastError_.length() == 0) {
-                    lastError_ = "Audio open failed";
-                }
-                setState(VoiceState::ERROR);
-            }
+            openAudioChannel();  // non-blocking, returns immediately
         }
-        if (listenRequested_) {
+        if (listenRequested_ && audioChannelOpen_) {
             tryStartListeningStream();
         }
+    }
+
+    // Drive non-blocking WS connection state machine
+    processWsConnect();
+
+    // If channel just opened, start listening
+    if (audioChannelOpen_ && listenRequested_ && !listenStarted_ && mcpReady_) {
+        tryStartListeningStream();
     }
 
     if (wsConnected_) {

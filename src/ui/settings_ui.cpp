@@ -54,6 +54,16 @@ void SettingsUI::setVolume(int level) {
     }
 }
 
+void SettingsUI::setBattery(float voltage, float percentage, bool lowBattery) {
+    int pct = static_cast<int>(percentage * 100.0f);
+    if (pct != batteryPercent_ || voltage != batteryVoltage_ || lowBattery != batteryLow_) {
+        batteryVoltage_ = voltage;
+        batteryPercent_ = pct;
+        batteryLow_ = lowBattery;
+        dirty_ = true;
+    }
+}
+
 void SettingsUI::update() {
     if (!visible_ || !spriteReady_ || !dirty_) return;
     dirty_ = false;
@@ -64,6 +74,7 @@ void SettingsUI::update() {
     drawBackButton();
     drawBrightnessRow();
     drawVolumeRow();
+    drawBatteryRow();
 
     canvas_.pushSprite(0, 0);
 }
@@ -106,6 +117,39 @@ void SettingsUI::drawSliderBar(int x, int y, int w, int activeIndex, int count,
         canvas_.drawString(labels[i], bx + w / 2, y + BTN_H / 2);
     }
     canvas_.setTextDatum(TL_DATUM);
+}
+
+void SettingsUI::drawBatteryRow() {
+    uint16_t accent = batteryLow_ ? UiTheme::RED : UiTheme::GREEN;
+    int y = BATTERY_ROW_Y;
+    int x = 20;
+
+    canvas_.setTextSize(1);
+    canvas_.setTextColor(UiTheme::TEXT, UiTheme::BG);
+    canvas_.setTextDatum(TL_DATUM);
+    canvas_.drawString("Power", x, y - 18);
+
+    // Battery bar background
+    canvas_.fillRoundRect(x, y, 280, 30, 6, UiTheme::PANEL);
+    canvas_.drawFastVLine(x + 8, y + 5, 20, accent);
+
+    // Battery percentage bar
+    int barX = x + 16;
+    int barW = 120;
+    int barH = 16;
+    int barY = y + 7;
+    canvas_.fillRoundRect(barX, barY, barW, barH, 4, UiTheme::PANEL_2);
+    int fillW = static_cast<int>(barW * batteryPercent_ / 100.0f);
+    if (fillW > 0) {
+        canvas_.fillRoundRect(barX, barY, fillW, barH, 4, accent);
+    }
+
+    // Percentage + voltage text
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d%% %.2fV", batteryPercent_, batteryVoltage_);
+    canvas_.setTextColor(UiTheme::TEXT, UiTheme::PANEL);
+    canvas_.setTextDatum(TL_DATUM);
+    canvas_.drawString(buf, barX + barW + 10, y + 9);
 }
 
 SettingsHitZone SettingsUI::hitTest(int x, int y) const {

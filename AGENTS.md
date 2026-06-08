@@ -16,8 +16,9 @@ Implemented:
 
 - Animated face UI with 11 emotions: `NORMAL`, `HAPPY`, `CURIOUS`, `LISTENING`, `THINKING`, `SPEAKING`, `SURPRISED`, `SLEEPY`, `TRACKING`, `SHY`, `SICK`.
 - Touch gestures: tap, double tap, left/right/up/down swipe, long press.
-- Five-icon menu with Wi-Fi, Camera, Timer, Music, and System pages.
-- Settings page opened by up swipe from the Face page.
+- Paged menu with 7 apps: Wi-Fi, Camera, Timer, Music, System, Album, and Memo. Six icons per page with up/down swipe paging and page indicator dots.
+- Settings page opened by up swipe from the Face page, with runtime brightness, volume presets, and battery voltage/percentage display.
+- Memo/reminder page with NVS-persisted memos (up to 8 entries, 60 chars each) and optional timed reminders. Due reminders display on the Face page with a beep alert. Accessible from Menu and through XiaoZhi MCP tools.
 - Camera preview and JPEG capture to SD.
 - Camera foreground startup stabilization: startup is deferred out of touch/state callbacks, user-opened camera clears failure cooldown, CoreS3 internal I2C is released before init, touch is suspended during camera init, and a failed foreground open gets one clean deinit/retry.
 - AI Vision preview and JPEG description request through a XiaoZhi-provided vision endpoint.
@@ -28,8 +29,10 @@ Implemented:
 - Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, XiaoZhi `self.servo.control` commands, and the dance demo. Face and XiaoZhi expression poses keep the mechanical center at pan 90 degrees and tilt 140 degrees.
 - PCA9685 servo driver self-disables after three missing-device scans so an unplugged base does not keep polling PortA forever.
 - Bond/affinity page opened by down swipe from Face. The main affinity score persists in NVS, while recent detail text is runtime-only.
-- XiaoZhi OTA activation/config, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools.
+- XiaoZhi OTA activation/config, TLS WebSocket (non-blocking state machine: IDLE→CONNECTING→WAITING_HELLO→READY/FAILED), Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools. DNS pre-check fails fast on resolution failure.
 - Wi-Fi auto reconnect, SD retry/fallback, PMU battery voltage reading, brownout safe mode, and basic power/sleep handling.
+- Audio buffer optimization: mic capture and Opus encode buffers use INTERNAL RAM for DMA stability; playback buffers use PSRAM. Opus encoder tuned to complexity=5 with VBR enabled.
+- AI page swipe optimization: right-swipe from AI page uses `pauseForForegroundTool()` to preserve the WebSocket connection; long press still fully closes the channel.
 
 Removed or intentionally not implemented:
 
@@ -41,7 +44,7 @@ Removed or intentionally not implemented:
 ## State Machine
 
 - `FACE` - default expression page.
-- `MENU` - five-icon app menu.
+- `MENU` - paged app menu (7 apps, 6 per page).
 - `WIFI_INFO` - Wi-Fi status page.
 - `CAMERA_DEBUG` - camera preview and SD photo capture.
 - `AI_VISION` - camera preview for XiaoZhi vision requests.
@@ -50,7 +53,9 @@ Removed or intentionally not implemented:
 - `SYSTEM_INFO` - heap, PSRAM, power, and vision status page.
 - `AFFINITY` - Bond page with score, level, mood, and recent interaction.
 - `AI` - XiaoZhi voice interaction page.
-- `SETTINGS` - runtime brightness and volume page.
+- `SETTINGS` - runtime brightness, volume, and battery display page.
+- `MEMO` - memo/reminder list page.
+- `ALBUM` - photo album grid and full-screen viewer.
 - `SLEEP` - dim screen sleep page.
 
 ## Code Structure
@@ -68,6 +73,7 @@ src/
 |- app/
 |  |- app_state.h/.cpp
 |  |- affinity_manager.h/.cpp
+|  |- memo_manager.h/.cpp
 |  |- gesture_manager.h/.cpp
 |  |- system_status.h/.cpp
 |  `- event_bus.h/.cpp
@@ -98,6 +104,7 @@ src/
 |  |- music_ui.h/.cpp
 |  |- affinity_ui.h/.cpp
 |  |- settings_ui.h/.cpp
+|  |- memo_ui.h/.cpp
 |  `- ui_theme.h
 `- vision/
    |- camera_manager.h/.cpp
@@ -126,11 +133,12 @@ src/
 - AI: single tap toggles listening; right swipe or long press -> Face.
 - Bond: Back, up swipe, or left swipe -> Face.
 - Settings: Back, left swipe, or down swipe -> Face.
-- Menu: tap app icon -> Wi-Fi, Camera, Timer, Music, or System; Back -> Face; left swipe -> Face.
+- Menu: tap app icon -> Wi-Fi, Camera, Timer, Music, System, Album, or Memo; up/down swipe pages; Back -> Face; left swipe -> Face.
 - Camera Debug: SHOT -> optionally center a heuristic face region, then save JPEG to `/photos`; Back or left swipe -> Menu.
 - AI Vision: Back or left swipe -> close preview and return to AI.
 - Pomodoro: IMU orientation selects preset before start; Start/Pause/Reset buttons control timer; Back or left swipe -> Menu.
 - Music: Play/Pause, Stop, Next, Back; left swipe -> Menu; clockwise twist skips to next track.
+- Memo: Back -> Menu.
 - Sleep: tap, double tap, or shake -> Face.
 
 ## XiaoZhi AI Notes
@@ -152,6 +160,9 @@ src/
   - `self.servo.control`
   - `self.device.status`
   - `self.device.control`
+  - `self.memo.add`
+  - `self.memo.list`
+  - `self.memo.remove`
 - AI Vision only works when the XiaoZhi MCP initialize params provide a vision URL/token.
 - `self.servo.control` supports `center`, `left`, `right`, `up`, `down`, `nod`, `shake`, `dance`, and `release`. It must not switch pages or reopen the XiaoZhi audio channel. `dance` starts servo motion first, then uses `/music` when available; music or SD failure must not cancel the servo motion.
 
@@ -188,6 +199,9 @@ Camera Debug, AI Vision, and photo capture may open the camera immediately becau
 - Stop music before exclusive speaker/mic use by XiaoZhi AI or Pomodoro completion melody.
 - Do not claim face recognition, closed-loop PID gimbal tracking, or autonomous base behavior.
 - Bond recent interaction detail is runtime-only even though the main affinity score persists.
+- Memo data persists in NVS but reminder display is runtime-only. Memo reminders depend on NTP time sync.
+- Audio buffers: mic capture and Opus encode must use `MALLOC_CAP_INTERNAL`; playback buffers may use `MALLOC_CAP_SPIRAM`. Do not move capture/encode buffers to PSRAM.
+- XiaoZhi WebSocket connection is non-blocking. Do not add blocking waits in the connection path.
 
 ## GitHub Hygiene
 
