@@ -99,7 +99,7 @@ private:
 
     static constexpr int OPUS_MAX_PACKET_BYTES = 1500;
     static constexpr int OPUS_MAX_DECODE_SAMPLES = 5760;
-    static constexpr int PLAYBACK_BUFFER_COUNT = 5;
+    static constexpr int PLAYBACK_BUFFER_COUNT = 3;
 
     struct OpusTxPacket {
         uint16_t length = 0;

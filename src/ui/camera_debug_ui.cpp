@@ -86,6 +86,43 @@ void CameraDebugUI::update() {
 }
 
 void CameraDebugUI::drawOverlay() {
+    canvas_.setTextSize(1);
+    canvas_.setTextDatum(TL_DATUM);
+
+    canvas_.fillRoundRect(4, 4, 122, 88, 7, UiTheme::PANEL);
+    canvas_.drawRoundRect(4, 4, 122, 88, 7, UiTheme::CYAN_DIM);
+    canvas_.setTextColor(UiTheme::GREEN, UiTheme::PANEL);
+    canvas_.setCursor(11, 12);
+    canvas_.printf("FPS: %.1f", currentFps_);
+
+    canvas_.setTextColor(UiTheme::TEXT_DIM, UiTheme::PANEL);
+    canvas_.setCursor(11, 27);
+    canvas_.printf("%dx%d", CAMERA_FRAME_WIDTH, CAMERA_FRAME_HEIGHT);
+
+    if (!cameraReady_) {
+        canvas_.setTextColor(UiTheme::RED, UiTheme::PANEL);
+        canvas_.setCursor(11, 42);
+        canvas_.print("Camera not ready");
+    }
+
+    if (!sdReady_) {
+        canvas_.setTextColor(UiTheme::AMBER, UiTheme::PANEL);
+        canvas_.setCursor(11, 57);
+        canvas_.print("No SD card");
+    }
+
+    if (lastPhotoPath_.length() > 0) {
+        canvas_.setTextColor(UiTheme::CYAN, UiTheme::PANEL);
+        canvas_.setCursor(11, 72);
+        canvas_.print(lastPhotoPath_);
+    }
+
+    if (captureStatus_.length() > 0) {
+        canvas_.fillRoundRect(6, DISPLAY_HEIGHT - 24, DISPLAY_WIDTH - 64, 18, 6, UiTheme::PANEL);
+        canvas_.setTextColor(UiTheme::TEXT, UiTheme::PANEL);
+        canvas_.setCursor(13, DISPLAY_HEIGHT - 20);
+        canvas_.print(captureStatus_);
+    }
 }
 
 void CameraDebugUI::drawBackButton() {

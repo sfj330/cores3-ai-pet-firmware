@@ -30,10 +30,9 @@ Music task  -> 音乐页激活时进行 SD MP3/WAV 流式播放
 - 相机采用懒启动。表情页只做短时检测窗口，Camera Debug 和 AI Vision 才拥有前台采集。
 - 前台相机启动会延迟到主循环执行，避免触摸/状态回调被卡住。
 - 小智语音在监听/说话时拥有麦克风和扬声器；音乐播放会在独占音频前停止或暂停。
-- 本地网页服务只在 Wi-Fi 连通时运行，对外暴露页面控制、状态查看、舵机动作、MJPEG 预览、本地 OTA 和照片浏览接口。
+- 本地网页服务只在 Wi-Fi 连通时运行，对外暴露页面控制、状态查看、舵机动作和照片浏览接口。
 - 舵机动作统一经过 `ServoMotionController`，避免大角度瞬间跳转。
 - PCA9685 是可选底座。单次启动中连续 3 次扫描不到后，驱动会禁用自身，避免一直轮询。
-- 电源策略是分级的：先通过低电量改变 UI 行为，持续的临界低电压再触发深度休眠。
 
 ## 目录职责
 
@@ -43,7 +42,7 @@ Music task  -> 音乐页激活时进行 SD MP3/WAV 流式播放
 - `src/ai`：小智激活、WebSocket、Opus 音频、MCP 工具。
 - `src/audio`：SD 音乐播放。
 - `src/servo`：PCA9685 驱动和安全运动规划。
-- `src/power`：电池电压、低电量/临界低电量处理和休眠辅助。
+- `src/power`：电池电压、低电压和休眠辅助。
 - `src/storage`：SD 卡探测、照片路径生成、文件写入与文件删除。
 - `src/network`：Wi-Fi、远程 AI Vision HTTP 客户端和本地网页控制服务。
 
@@ -51,5 +50,4 @@ Music task  -> 音乐页激活时进行 SD MP3/WAV 流式播放
 
 - 新增页面时，先扩展 `AppStateEnum`，再添加 `src/ui` 页面类，最后在 `stateChangeHandler()`、`gestureEventHandler()`，以及需要时的小智工具或网页控制入口中一起接入。
 - 新增小智工具时，在 `xiaozhi_client.*` 注册工具，再通过 `main.cpp` 的 pending-tool 处理流程执行。
-- 如果新增网页能力，要同时更新 `web_server.*` 和 `web_ui.h`，并明确说明它只是复用当前前台资源，还是能够自己申请这些资源。
-- 新的开关、时间、速度、阈值优先放进 `src/config/app_config.h`，方便后续快速调参。
+- 新的开关、时间、速度、阈值优先放进 `src/config/app_config.h`，方便比赛演示时快速调参。

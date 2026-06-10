@@ -70,7 +70,6 @@ MemoManager gMemoManager;
 static float gCurrentFps = 0.0f;
 static unsigned long gLastFpsCalc = 0;
 static int gFrameCount = 0;
-static unsigned long gLastLowBatteryRemindMs = 0;
 
 static TaskHandle_t uiTaskHandle = nullptr;
 static TaskHandle_t touchTaskHandle = nullptr;
@@ -1120,11 +1119,9 @@ void touchTask(void* pvParameters) {
 }
 
 void cameraTask(void* pvParameters) {
-    const TickType_t targetTicks = pdMS_TO_TICKS(1000 / CAMERA_FPS);
+    const TickType_t delayTicks = pdMS_TO_TICKS(1000 / CAMERA_FPS);
 
     while (true) {
-        TickType_t frameStart = xTaskGetTickCount();
-
         if (gCameraManager.isRunning()) {
             AppStateEnum state = AppState::instance().getState();
 
@@ -1141,12 +1138,7 @@ void cameraTask(void* pvParameters) {
             }
         }
 
-        TickType_t elapsed = xTaskGetTickCount() - frameStart;
-        if (elapsed < targetTicks) {
-            vTaskDelay(targetTicks - elapsed);
-        } else {
-            vTaskDelay(1);
-        }
+        vTaskDelay(delayTicks);
     }
 }
 
@@ -1271,16 +1263,6 @@ void powerTask(void* pvParameters) {
 
     while (true) {
         gPowerManager.update();
-
-        if (gPowerManager.isLowBattery()) {
-            unsigned long now = millis();
-            if (now - gLastLowBatteryRemindMs >= BATTERY_LOW_REMIND_INTERVAL_MS) {
-                gLastLowBatteryRemindMs = now;
-                if (AppState::instance().getState() == AppStateEnum::FACE) {
-                    AppState::instance().setEmotion(FaceEmotion::SLEEPY);
-                }
-            }
-        }
 
         Event powerEvent;
         powerEvent.type = EventType::POWER_EVENT;
@@ -3246,12 +3228,6 @@ static void lowBatteryHandler(float voltage) {
     if (appState.getState() == AppStateEnum::FACE) {
         appState.setEmotion(FaceEmotion::SLEEPY);
     }
-    gLastLowBatteryRemindMs = millis();
-}
-
-static void criticalBatteryHandler(float voltage) {
-    Serial.printf("CRITICAL BATTERY: %.2fV - entering deep sleep\n", voltage);
-    gPowerManager.enterDeepSleep();
 }
 
 static void handleEvent(const Event& event) {
@@ -3674,7 +3650,6 @@ void setup() {
     bootStep("PowerManager...", 12);
     gPowerManager.begin();
     gPowerManager.setLowBatteryCallback(lowBatteryHandler);
-    gPowerManager.setCriticalBatteryCallback(criticalBatteryHandler);
     bootStep("PowerManager OK", 12);
 
     bootStep("EventBus...", 13);
@@ -3788,59 +3763,6 @@ void setup() {
             else if (action == "dance") motionAction = ServoMotionAction::DANCE;
             else return false;
             return gServoMotionController.command(motionAction);
-        };
-        wcb.captureJpeg = [](uint8_t** data, size_t* len) -> bool {
-            if (!gCameraManager.isRunning()) return false;
-            CameraJpeg jpeg;
-            String status;
-            if (!gCameraManager.captureJpegToMemory(jpeg, status)) return false;
-            *data = jpeg.data;
-            *len = jpeg.length;
-            return true;
-        };
-        wcb.releaseJpeg = [](uint8_t* data) {
-            if (data) free(data);
-        };
-        wcb.onOtaStart = []() {
-            Serial.println("OTA: starting, pausing tasks...");
-        };
-        wcb.onOtaEnd = []() {
-            Serial.println("OTA: ended");
-        };
-        wcb.getFaceState = []() -> String {
-            JsonDocument doc;
-            doc["emotion"] = gFaceUI.getEmotion();
-            doc["gazeX"] = gFaceUI.getGazeX();
-            doc["gazeY"] = gFaceUI.getGazeY();
-            doc["blinking"] = gFaceUI.getBlinking();
-            doc["speaking"] = gFaceUI.getSpeaking();
-            doc["mouthOpen"] = gFaceUI.getMouthOpen();
-            String out;
-            serializeJson(doc, out);
-            return out;
-        };
-        wcb.setEmotion = [](const String& emotion) -> bool {
-            FaceEmotion em = FaceEmotion::NORMAL;
-            if (emotion == "happy") em = FaceEmotion::HAPPY;
-            else if (emotion == "curious") em = FaceEmotion::CURIOUS;
-            else if (emotion == "listening") em = FaceEmotion::LISTENING;
-            else if (emotion == "thinking") em = FaceEmotion::THINKING;
-            else if (emotion == "speaking") em = FaceEmotion::SPEAKING;
-            else if (emotion == "surprised") em = FaceEmotion::SURPRISED;
-            else if (emotion == "sleepy") em = FaceEmotion::SLEEPY;
-            else if (emotion == "shy") em = FaceEmotion::SHY;
-            else if (emotion == "sick") em = FaceEmotion::SICK;
-            else if (emotion == "normal") em = FaceEmotion::NORMAL;
-            else return false;
-            AppState::instance().setEmotion(em);
-            return true;
-        };
-        wcb.doAction = [](const String& action) -> bool {
-            if (action == "nod") return gServoMotionController.command(ServoMotionAction::NOD);
-            else if (action == "shake") return gServoMotionController.command(ServoMotionAction::SHAKE);
-            else if (action == "dance") return gServoMotionController.command(ServoMotionAction::DANCE);
-            else if (action == "wink") { gFaceUI.triggerBlink(); return true; }
-            return false;
         };
         gWebServer.setCallbacks(wcb);
     }

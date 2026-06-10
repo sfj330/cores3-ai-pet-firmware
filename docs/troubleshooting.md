@@ -31,7 +31,6 @@ Current mitigations in code:
 - `M5.In_I2C.release()` is called before camera init.
 - Touch task is temporarily suspended during camera init.
 - A failed foreground open gets one clean `end()` plus retry.
-- The camera task now targets 20 FPS with elapsed-time pacing instead of a fixed post-frame delay, which reduces uneven preview timing when frame work runs long.
 
 ## Brownout Or Unexpected Reboot
 
@@ -108,31 +107,3 @@ Check:
 - Another service is not already bound to port `80`.
 
 If Wi-Fi disconnects, the firmware stops the web server automatically and restarts it after reconnect.
-
-If the page loads but the live preview stays blank, remember that `/api/stream` only mirrors an already-running foreground camera session. Open Camera Debug or AI Vision on the device first.
-
-## Web OTA Fails Or Device Does Not Reboot
-
-Check:
-
-- The build was produced with `board_build.partitions = default_16MB.csv`.
-- The uploaded file is the correct `.bin` for `[env:m5stack-cores3]`.
-- Power stays stable during the full upload and reboot.
-- Serial logs do not show `No OTA partition`, `OTA begin failed`, `Write failed`, or `OTA end failed`.
-
-Notes:
-
-- Web OTA writes the next boot partition directly through ESP-IDF OTA APIs, then switches the boot slot and restarts.
-- The HTTP OTA endpoint is unauthenticated and intended only for trusted LAN use.
-
-## Device Falls Into Deep Sleep On Low Battery
-
-Check:
-
-- Battery voltage on the System page or serial logs.
-- Whether voltage stayed below `3.2 V` for about 30 seconds.
-
-Current behavior:
-
-- Below the low-battery threshold, the face can be pushed to `SLEEPY` and Face-page vision work is reduced.
-- If the voltage remains below the critical threshold long enough, the firmware calls deep sleep with a timed wakeup instead of running until a hard brownout.
