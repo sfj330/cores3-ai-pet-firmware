@@ -25,6 +25,8 @@ public:
     void setMemos(const MemoDisplayEntry* memos, int count, uint32_t now);
     MemoHitZone hitTest(int x, int y) const;
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
 private:
     void drawRow(int y, int index, const MemoDisplayEntry& entry);
     void drawBackButton();
@@ -34,14 +36,15 @@ private:
     bool spriteReady_ = false;
     bool visible_ = false;
     bool dirty_ = true;
+    unsigned long backPressedUntil_ = 0;
     MemoDisplayEntry memos_[MAX_MEMO_COUNT];
     int memoCount_ = 0;
     uint32_t memoNow_ = 0;
 
-    static constexpr int BACK_X = 8;
-    static constexpr int BACK_Y = DISPLAY_HEIGHT - 32;
-    static constexpr int BACK_W = 76;
-    static constexpr int BACK_H = 24;
+    static constexpr int BACK_X = 5;
+    static constexpr int BACK_Y = 5;
+    static constexpr int BACK_W = 74;
+    static constexpr int BACK_H = 26;
     static constexpr int ROW_START_Y = 50;
     static constexpr int ROW_H = 22;
 };

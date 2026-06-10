@@ -44,6 +44,8 @@ public:
     AlbumHitZone hitTest(int x, int y) const;
     int thumbnailIndexAt(int x, int y) const;
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
 private:
     void drawGrid();
     void drawFullView();
@@ -53,6 +55,7 @@ private:
     bool spriteReady_ = false;
     bool visible_ = false;
     bool dirty_ = true;
+    unsigned long backPressedUntil_ = 0;
 
     AlbumViewMode viewMode_ = AlbumViewMode::GRID;
 
@@ -75,8 +78,8 @@ private:
 
     static constexpr int BACK_X = 5;
     static constexpr int BACK_Y = 5;
-    static constexpr int BACK_W = 60;
-    static constexpr int BACK_H = 24;
+    static constexpr int BACK_W = 74;
+    static constexpr int BACK_H = 26;
 
     static constexpr int DEL_X = DISPLAY_WIDTH - 64;
     static constexpr int DEL_Y = DISPLAY_HEIGHT - 28;

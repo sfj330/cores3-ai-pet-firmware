@@ -254,6 +254,8 @@ void PomodoroUI::update() {
         reset();
     }
 
+    if (millis() < backPressedUntil_) dirty_ = true;
+
     if (!dirty_ && (now - lastDrawTime_ < REDRAW_INTERVAL_MS)) return;
 
     drawBackground();
@@ -414,7 +416,7 @@ void PomodoroUI::drawControls() {
 }
 
 void PomodoroUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }
 
 void PomodoroUI::drawNotification() {

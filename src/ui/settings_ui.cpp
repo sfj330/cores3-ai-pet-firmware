@@ -65,7 +65,9 @@ void SettingsUI::setBattery(float voltage, float percentage, bool lowBattery) {
 }
 
 void SettingsUI::update() {
-    if (!visible_ || !spriteReady_ || !dirty_) return;
+    if (!visible_ || !spriteReady_) return;
+    if (millis() < backPressedUntil_) dirty_ = true;
+    if (!dirty_) return;
     dirty_ = false;
 
     canvas_.fillSprite(UiTheme::BG);
@@ -80,7 +82,7 @@ void SettingsUI::update() {
 }
 
 void SettingsUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }
 
 void SettingsUI::drawBrightnessRow() {

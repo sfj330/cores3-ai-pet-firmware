@@ -36,6 +36,8 @@ public:
 
     void pushCameraFrame(const uint16_t* data, int w, int h);
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; }
+
 private:
     void drawOverlay();
     void drawBackButton();
@@ -45,6 +47,7 @@ private:
     M5Canvas canvas_;
     bool spriteReady_ = false;
     bool visible_ = false;
+    unsigned long backPressedUntil_ = 0;
     CameraViewMode mode_ = CameraViewMode::DEBUG;
     bool cameraReady_ = false;
     bool sdReady_ = false;
@@ -54,10 +57,10 @@ private:
     String visionStatus_;
     String visionResult_;
 
-    static constexpr int BACK_X = DISPLAY_WIDTH - 60;
-    static constexpr int BACK_Y = 2;
-    static constexpr int BACK_W = 56;
-    static constexpr int BACK_H = 24;
+    static constexpr int BACK_X = 5;
+    static constexpr int BACK_Y = 5;
+    static constexpr int BACK_W = 74;
+    static constexpr int BACK_H = 26;
 
     static constexpr int SHOT_X = DISPLAY_WIDTH - 50;
     static constexpr int SHOT_Y = 40;

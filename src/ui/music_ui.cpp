@@ -52,7 +52,9 @@ MusicHitZone MusicUI::hitTest(int x, int y) const {
 }
 
 void MusicUI::update() {
-    if (!visible_ || !spriteReady_ || !dirty_) return;
+    if (!visible_ || !spriteReady_) return;
+    if (millis() < backPressedUntil_) dirty_ = true;
+    if (!dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
     UiTheme::drawTitle(canvas_, "Music", "SD audio player", UiTheme::BLUE);
@@ -80,13 +82,15 @@ void MusicUI::update() {
                             status_.c_str(), statusColor, UiTheme::BG);
     canvas_.setTextDatum(TL_DATUM);
 
+    drawProgressBar();
+
     drawControls();
     canvas_.pushSprite(0, 0);
     dirty_ = false;
 }
 
 void MusicUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }
 
 void MusicUI::drawMusicIcon() {
@@ -102,6 +106,28 @@ void MusicUI::drawMusicIcon() {
     canvas_.fillCircle(x + 45, y + 36, 9, UiTheme::BG);
     canvas_.fillCircle(x + 23, y + 45, 4, UiTheme::BLUE);
     canvas_.fillCircle(x + 45, y + 36, 4, UiTheme::BLUE);
+}
+
+void MusicUI::drawProgressBar() {
+    int barX = 30;
+    int barY = 163;
+    int barW = DISPLAY_WIDTH - 60;
+    int barH = 6;
+
+    canvas_.fillRoundRect(barX, barY, barW, barH, 3, UiTheme::PANEL_2);
+
+    if (playbackState_ == MusicPlaybackState::PLAYING) {
+        int segW = 30;
+        int offset = (millis() / 80) % (barW + segW) - segW;
+        int fillStart = max(0, offset);
+        int fillEnd = min(barW, offset + segW);
+        if (fillEnd > fillStart) {
+            canvas_.fillRoundRect(barX + fillStart, barY, fillEnd - fillStart, barH, 3, UiTheme::BLUE);
+        }
+        dirty_ = true;
+    } else if (playbackState_ == MusicPlaybackState::PAUSED) {
+        canvas_.fillRoundRect(barX, barY, barW / 3, barH, 3, UiTheme::AMBER);
+    }
 }
 
 void MusicUI::drawControls() {

@@ -89,31 +89,24 @@ void CameraDebugUI::drawOverlay() {
     canvas_.setTextSize(1);
     canvas_.setTextDatum(TL_DATUM);
 
-    canvas_.fillRoundRect(4, 4, 122, 88, 7, UiTheme::PANEL);
-    canvas_.drawRoundRect(4, 4, 122, 88, 7, UiTheme::CYAN_DIM);
-    canvas_.setTextColor(UiTheme::GREEN, UiTheme::PANEL);
-    canvas_.setCursor(11, 12);
-    canvas_.printf("FPS: %.1f", currentFps_);
-
-    canvas_.setTextColor(UiTheme::TEXT_DIM, UiTheme::PANEL);
-    canvas_.setCursor(11, 27);
-    canvas_.printf("%dx%d", CAMERA_FRAME_WIDTH, CAMERA_FRAME_HEIGHT);
+    canvas_.fillRoundRect(4, 4, 122, 58, 7, UiTheme::PANEL);
+    canvas_.drawRoundRect(4, 4, 122, 58, 7, UiTheme::CYAN_DIM);
 
     if (!cameraReady_) {
         canvas_.setTextColor(UiTheme::RED, UiTheme::PANEL);
-        canvas_.setCursor(11, 42);
+        canvas_.setCursor(11, 12);
         canvas_.print("Camera not ready");
     }
 
     if (!sdReady_) {
         canvas_.setTextColor(UiTheme::AMBER, UiTheme::PANEL);
-        canvas_.setCursor(11, 57);
+        canvas_.setCursor(11, 27);
         canvas_.print("No SD card");
     }
 
     if (lastPhotoPath_.length() > 0) {
         canvas_.setTextColor(UiTheme::CYAN, UiTheme::PANEL);
-        canvas_.setCursor(11, 72);
+        canvas_.setCursor(11, 42);
         canvas_.print(lastPhotoPath_);
     }
 
@@ -126,7 +119,7 @@ void CameraDebugUI::drawOverlay() {
 }
 
 void CameraDebugUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }
 
 void CameraDebugUI::drawShotButton() {

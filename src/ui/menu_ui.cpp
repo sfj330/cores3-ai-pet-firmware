@@ -128,7 +128,9 @@ int MenuUI::currentPage() const {
 }
 
 void MenuUI::update() {
-    if (!visible_ || !spriteReady_ || !dirty_) return;
+    if (!visible_ || !spriteReady_) return;
+    if (millis() < backPressedUntil_) dirty_ = true;
+    if (!dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
 
@@ -251,7 +253,7 @@ void MenuUI::drawAppIcon(int index, int x, int y, int size, uint16_t accent) {
 }
 
 void MenuUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }
 
 void MenuUI::drawPageDots() {

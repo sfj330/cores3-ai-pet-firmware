@@ -27,15 +27,19 @@ public:
 
     MusicHitZone hitTest(int x, int y) const;
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
 private:
     void drawBackButton();
     void drawMusicIcon();
+    void drawProgressBar();
     void drawControls();
 
     M5Canvas canvas_;
     bool spriteReady_ = false;
     bool visible_ = false;
     bool dirty_ = true;
+    unsigned long backPressedUntil_ = 0;
 
     String title_ = "No audio file";
     String status_ = "No music";

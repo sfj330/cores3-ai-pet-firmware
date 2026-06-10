@@ -29,6 +29,8 @@ public:
 
     InfoHitZone hitTest(int x, int y) const;
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
 private:
     void drawWifiPage();
     void drawSystemPage();
@@ -39,6 +41,7 @@ private:
     bool spriteReady_ = false;
     bool visible_ = false;
     bool dirty_ = true;
+    unsigned long backPressedUntil_ = 0;
     InfoPageMode mode_ = InfoPageMode::WIFI;
 
     String wifiStatus_ = "Unknown";
@@ -48,8 +51,8 @@ private:
 
     SystemStatusViewModel systemStatus_;
 
-    static constexpr int BACK_X = 8;
-    static constexpr int BACK_Y = DISPLAY_HEIGHT - 32;
-    static constexpr int BACK_W = 76;
-    static constexpr int BACK_H = 24;
+    static constexpr int BACK_X = 5;
+    static constexpr int BACK_Y = 5;
+    static constexpr int BACK_W = 74;
+    static constexpr int BACK_H = 26;
 };

@@ -45,7 +45,9 @@ MemoHitZone MemoUI::hitTest(int x, int y) const {
 }
 
 void MemoUI::update() {
-    if (!visible_ || !spriteReady_ || !dirty_) return;
+    if (!visible_ || !spriteReady_) return;
+    if (millis() < backPressedUntil_) dirty_ = true;
+    if (!dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
     UiTheme::drawTitle(canvas_, "Memos", "AI memos & reminders", UiTheme::AMBER);
@@ -103,7 +105,7 @@ void MemoUI::drawRow(int y, int index, const MemoDisplayEntry& entry) {
 }
 
 void MemoUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }
 
 void MemoUI::formatRemaining(uint32_t remindAt, uint32_t now, char* buf, int bufLen) {

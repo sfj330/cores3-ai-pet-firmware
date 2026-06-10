@@ -30,6 +30,8 @@ public:
 
     SettingsHitZone hitTest(int x, int y) const;
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
 private:
     void drawBackButton();
     void drawBrightnessRow();
@@ -42,6 +44,7 @@ private:
     bool spriteReady_ = false;
     bool visible_ = false;
     bool dirty_ = true;
+    unsigned long backPressedUntil_ = 0;
 
     int brightnessLevel_ = 2;
     int volumeLevel_ = 1;

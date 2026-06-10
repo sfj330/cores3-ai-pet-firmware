@@ -2,7 +2,6 @@
 
 static constexpr const char* NVS_NAMESPACE = "affinity";
 static constexpr const char* NVS_KEY_VALUE = "val";
-static constexpr unsigned long SAVE_DEBOUNCE_MS = 5000;
 
 void AffinityManager::begin() {
     prefs_.begin(NVS_NAMESPACE, false);
@@ -10,6 +9,8 @@ void AffinityManager::begin() {
     if (value_ < AFFINITY_MIN_VALUE) value_ = AFFINITY_MIN_VALUE;
     if (value_ > AFFINITY_MAX_VALUE) value_ = AFFINITY_MAX_VALUE;
     recent_ = "Ready";
+    dirty_ = false;
+    lastWriteMs_ = millis();
     Serial.printf("Affinity loaded: %d\n", value_);
 }
 
@@ -22,18 +23,14 @@ void AffinityManager::add(int delta, const char* reason) {
         recent_ = reason;
     }
     if (value_ != prev) {
-        unsigned long now = millis();
-        if (now - lastSaveTime_ >= SAVE_DEBOUNCE_MS) {
-            save();
-            lastSaveTime_ = now;
-        }
+        dirty_ = true;
     }
 }
 
 void AffinityManager::reset() {
     value_ = AFFINITY_DEFAULT_VALUE;
     recent_ = "Reset";
-    save();
+    dirty_ = true;
 }
 
 void AffinityManager::save() {
@@ -60,4 +57,18 @@ const char* AffinityManager::moodName() const {
 
 const String& AffinityManager::recent() const {
     return recent_;
+}
+
+void AffinityManager::flush() {
+    if (dirty_) {
+        save();
+        dirty_ = false;
+        lastWriteMs_ = millis();
+    }
+}
+
+void AffinityManager::update() {
+    if (dirty_ && millis() - lastWriteMs_ >= WRITE_INTERVAL_MS) {
+        flush();
+    }
 }

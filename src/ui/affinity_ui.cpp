@@ -47,7 +47,9 @@ AffinityHitZone AffinityUI::hitTest(int x, int y) const {
 }
 
 void AffinityUI::update() {
-    if (!visible_ || !spriteReady_ || !dirty_) return;
+    if (!visible_ || !spriteReady_) return;
+    if (millis() < backPressedUntil_) dirty_ = true;
+    if (!dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
     UiTheme::drawTitle(canvas_, "Bond", "Companion status", UiTheme::PINK);
@@ -99,5 +101,5 @@ void AffinityUI::drawRow(int x, int y, const char* label, const String& value, u
 }
 
 void AffinityUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }

@@ -435,6 +435,8 @@ static void applyVolumeLevel(SystemVolumeLevel level) {
 }
 
 static void enterSleepMode() {
+    gMemoManager.flush();
+    gAffinityManager.flush();
     gPowerManager.enterSleep();
     M5.Lcd.setBrightness(24);
 }
@@ -1263,6 +1265,8 @@ void powerTask(void* pvParameters) {
 
     while (true) {
         gPowerManager.update();
+        gMemoManager.update();
+        gAffinityManager.update();
 
         Event powerEvent;
         powerEvent.type = EventType::POWER_EVENT;
@@ -2648,6 +2652,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             MenuHitZone hit = gMenuUI.hitTest(event.endX, event.endY);
             if (event.type == GestureType::SINGLE_TAP) {
                 if (hit == MenuHitZone::MENU_HIT_BACK) {
+                    gMenuUI.setBackPressed();
                     appState.setState(AppStateEnum::FACE);
                     break;
                 }
@@ -2744,6 +2749,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             PomoHitZone hit = gPomodoroUI.hitTest(event.endX, event.endY);
             if (event.type == GestureType::SINGLE_TAP) {
                 if (hit == PomoHitZone::POMO_HIT_BACK) {
+                    gPomodoroUI.setBackPressed();
                     appState.setState(gPomodoroReturnTo);
                     break;
                 }
@@ -2773,6 +2779,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             MusicHitZone hit = gMusicUI.hitTest(event.endX, event.endY);
             if (event.type == GestureType::SINGLE_TAP) {
                 if (hit == MusicHitZone::MUSIC_HIT_BACK) {
+                    gMusicUI.setBackPressed();
                     appState.setState(gMusicReturnTo);
                     break;
                 }
@@ -2830,6 +2837,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                 SettingsHitZone hit = gSettingsUI.hitTest(event.endX, event.endY);
                 switch (hit) {
                     case SettingsHitZone::BACK:
+                        gSettingsUI.setBackPressed();
                         appState.setState(AppStateEnum::FACE);
                         break;
                     case SettingsHitZone::BRIGHTNESS_DIM:
@@ -2913,6 +2921,7 @@ static void gestureEventHandler(const GestureEvent& event) {
             if (event.type == GestureType::SINGLE_TAP) {
                 MemoHitZone hit = gMemoUI.hitTest(event.endX, event.endY);
                 if (hit == MemoHitZone::MEMO_HIT_BACK) {
+                    gMemoUI.setBackPressed();
                     appState.setState(AppStateEnum::MENU);
                 }
             } else if (event.type == GestureType::LEFT_SWIPE) {
@@ -2966,6 +2975,9 @@ static void stateChangeHandler(AppStateEnum state) {
     }
     if (state != AppStateEnum::MEMO) {
         gMemoUI.hide();
+    }
+    if (state != AppStateEnum::MUSIC) {
+        gMusicManager.stop();
     }
 
     switch (state) {
@@ -3023,15 +3035,19 @@ static void stateChangeHandler(AppStateEnum state) {
                 if (gXiaoZhiClient.isActivated()) {
                     if (gXiaoZhiClient.isAudioChannelOpen()) {
                         gXiaoZhiClient.resumeFromForegroundTool();
+                        gFaceUI.setStatusText("Connected", UiTheme::GREEN, 1500);
                     } else {
                         gNeedOpenAudioChannel = true;
+                        gFaceUI.setStatusText("Connecting...", UiTheme::CYAN, 3000);
                     }
                 } else if (!gXiaoZhiClient.hasActivationCode() && !gActivationCodeRequested) {
                     gNeedActivationRequest = true;
                     gActivationCodeRequested = true;
+                    gFaceUI.setStatusText("Activating...", UiTheme::AMBER, 3000);
                 }
             } else {
                 AppState::instance().setEmotion(FaceEmotion::SURPRISED);
+                gFaceUI.setStatusText("No Wi-Fi", UiTheme::RED, 3000);
                 Serial.println("AI: Wi-Fi not connected");
             }
             gLastServoPoseEmotion = AppState::instance().getEmotion();
@@ -3213,7 +3229,9 @@ static void aiStateHandler(VoiceState voiceState) {
                 break;
             case VoiceState::THINKING:   appState.setEmotion(FaceEmotion::THINKING); break;
             case VoiceState::SPEAKING:   appState.setEmotion(FaceEmotion::SPEAKING); break;
-            case VoiceState::ERROR:      appState.setEmotion(FaceEmotion::SURPRISED); break;
+            case VoiceState::ERROR:      appState.setEmotion(FaceEmotion::SURPRISED);
+                gFaceUI.setStatusText("Connection error", UiTheme::RED, 3000);
+                break;
         }
     }
     Event aiEvent;

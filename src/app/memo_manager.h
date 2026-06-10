@@ -20,12 +20,18 @@ public:
     void checkDueReminders(uint32_t now, MemoEntry* out, int maxOut, int& outCount);
     bool hasDueReminders(uint32_t now) const;
     void clearReminder(uint8_t id);
-    void save();
+    void flush();
+    void update();
 
 private:
     void load();
+    void save();
+
     uint8_t nextId_ = 1;
     int count_ = 0;
     MemoEntry entries_[MAX_MEMO_COUNT];
     Preferences prefs_;
+    bool dirty_ = false;
+    unsigned long lastWriteMs_ = 0;
+    static constexpr unsigned long WRITE_INTERVAL_MS = 5000;
 };

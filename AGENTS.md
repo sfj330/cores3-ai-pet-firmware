@@ -29,9 +29,9 @@ Implemented:
 - Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, XiaoZhi `self.servo.control` commands, and the dance demo. Face and XiaoZhi expression poses keep the mechanical center at pan 90 degrees and tilt 140 degrees.
 - PCA9685 servo driver self-disables after three missing-device scans so an unplugged base does not keep polling PortA forever.
 - Bond/affinity page opened by down swipe from Face. The main affinity score persists in NVS, while recent detail text is runtime-only.
-- XiaoZhi OTA activation/config, TLS WebSocket (non-blocking state machine: IDLE→CONNECTING→WAITING_HELLO→READY/FAILED), Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools. DNS pre-check fails fast on resolution failure.
+- XiaoZhi OTA activation/config, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools.
 - Wi-Fi auto reconnect, SD retry/fallback, PMU battery voltage reading, brownout safe mode, and basic power/sleep handling.
-- Audio buffer optimization: mic capture and Opus encode buffers use INTERNAL RAM for DMA stability; playback buffers use PSRAM. Opus encoder tuned to complexity=5 with VBR enabled.
+- Audio buffer optimization: mic capture and Opus encode buffers use INTERNAL RAM for DMA stability; playback buffers use PSRAM.
 - AI page swipe optimization: right-swipe from AI page uses `pauseForForegroundTool()` to preserve the WebSocket connection; long press still fully closes the channel.
 
 Removed or intentionally not implemented:
@@ -201,7 +201,7 @@ Camera Debug, AI Vision, and photo capture may open the camera immediately becau
 - Bond recent interaction detail is runtime-only even though the main affinity score persists.
 - Memo data persists in NVS but reminder display is runtime-only. Memo reminders depend on NTP time sync.
 - Audio buffers: mic capture and Opus encode must use `MALLOC_CAP_INTERNAL`; playback buffers may use `MALLOC_CAP_SPIRAM`. Do not move capture/encode buffers to PSRAM.
-- XiaoZhi WebSocket connection is non-blocking. Do not add blocking waits in the connection path.
+- XiaoZhi WebSocket connection is blocking (called from AI task, does not block UI). Audio buffers: playback must use PSRAM.
 
 ## GitHub Hygiene
 

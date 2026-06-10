@@ -36,12 +36,14 @@ inline void drawStatusPill(M5Canvas& c, int x, int y, int w, const char* label,
     c.setTextDatum(TL_DATUM);
 }
 
-inline void drawBackButton(M5Canvas& c, int x, int y, int w, int h) {
-    c.fillRoundRect(x, y, w, h, 6, PANEL);
-    c.drawRoundRect(x, y, w, h, 6, PANEL_LIGHT);
+inline void drawBackButton(M5Canvas& c, int x, int y, int w, int h, bool pressed = false) {
+    uint16_t bg = pressed ? PANEL_LIGHT : PANEL;
+    uint16_t fg = pressed ? TEXT : TEXT_DIM;
+    c.fillRoundRect(x, y, w, h, 6, bg);
+    c.drawRoundRect(x, y, w, h, 6, pressed ? TEXT : PANEL_LIGHT);
     c.setTextDatum(MC_DATUM);
     c.setTextSize(1);
-    c.setTextColor(TEXT_DIM, PANEL);
+    c.setTextColor(fg, bg);
     c.drawString("< Back", x + w / 2, y + h / 2 + 1);
     c.setTextDatum(TL_DATUM);
 }

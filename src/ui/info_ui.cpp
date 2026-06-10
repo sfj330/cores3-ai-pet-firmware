@@ -55,7 +55,9 @@ InfoHitZone InfoUI::hitTest(int x, int y) const {
 }
 
 void InfoUI::update() {
-    if (!visible_ || !spriteReady_ || !dirty_) return;
+    if (!visible_ || !spriteReady_) return;
+    if (millis() < backPressedUntil_) dirty_ = true;
+    if (!dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
     if (mode_ == InfoPageMode::WIFI) {
@@ -128,5 +130,5 @@ void InfoUI::drawRow(int x, int y, const char* label, const String& value, uint1
 }
 
 void InfoUI::drawBackButton() {
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 }

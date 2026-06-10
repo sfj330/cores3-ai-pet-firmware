@@ -37,6 +37,8 @@ public:
     int pageCount() const;
     int currentPage() const;
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
     static constexpr int APP_COUNT = 7;
     static constexpr int PAGE_SIZE = MENU_PAGE_SIZE;
 
@@ -50,15 +52,16 @@ private:
     bool spriteReady_ = false;
     bool visible_ = false;
     bool dirty_ = true;
+    unsigned long backPressedUntil_ = 0;
     String wifiStatus_ = "Disconnected";
     String wifiIp_ = "--.--.--.--";
     String visionStatus_ = "Vision: unknown";
     int currentPage_ = 0;
 
-    static constexpr int BACK_X = 8;
-    static constexpr int BACK_Y = DISPLAY_HEIGHT - 32;
-    static constexpr int BACK_W = 76;
-    static constexpr int BACK_H = 24;
+    static constexpr int BACK_X = 5;
+    static constexpr int BACK_Y = 5;
+    static constexpr int BACK_W = 74;
+    static constexpr int BACK_H = 26;
     static constexpr int APP_W = 74;
     static constexpr int APP_H = 74;
     static constexpr int ICON_SIZE = 50;

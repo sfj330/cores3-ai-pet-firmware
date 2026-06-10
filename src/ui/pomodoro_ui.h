@@ -48,6 +48,8 @@ public:
     void markDirty();
     void restoreDisplayRotation();
 
+    void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
+
 private:
     bool ensureSprite();
     void applyDisplayRotation(PomoOrientation o);
@@ -88,6 +90,7 @@ private:
     bool selectionLocked_ = false;
     bool completionNotified_ = false;
     unsigned long lastDrawTime_ = 0;
+    unsigned long backPressedUntil_ = 0;
     PomoOrientation currentOrientation_ = PomoOrientation::FLAT;
     uint8_t baseRotation_ = 1;
     uint8_t appliedRotation_ = 1;
@@ -95,8 +98,8 @@ private:
 
     static constexpr int BACK_X = 5;
     static constexpr int BACK_Y = 5;
-    static constexpr int BACK_W = 80;
-    static constexpr int BACK_H = 28;
+    static constexpr int BACK_W = 74;
+    static constexpr int BACK_H = 26;
 
     static constexpr int BTN_Y = 190;
     static constexpr int BTN_W = 80;

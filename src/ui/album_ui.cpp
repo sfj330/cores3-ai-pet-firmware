@@ -183,6 +183,8 @@ int AlbumUI::thumbnailIndexAt(int x, int y) const {
 void AlbumUI::update() {
     if (!visible_ || !spriteReady_) return;
 
+    if (millis() < backPressedUntil_) dirty_ = true;
+
     bool needRedraw = dirty_;
     bool progressiveLoad = false;
 
@@ -212,14 +214,37 @@ void AlbumUI::update() {
 }
 
 void AlbumUI::drawEmptyState() {
-    UiTheme::drawTitle(canvas_, "Album", "No photos", UiTheme::PINK);
-    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H);
+    UiTheme::drawTitle(canvas_, "Album", nullptr, UiTheme::PINK);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 
+    // Camera icon centered on screen
+    int iconW = 50, iconH = 40;
+    int iconX = (DISPLAY_WIDTH - iconW) / 2;
+    int iconY = 65;
+    int iconCx = iconX + iconW / 2;
+    int iconCy = iconY + iconH / 2 + 2;
+
+    // Camera body
+    canvas_.fillRoundRect(iconX, iconY + 6, iconW, iconH - 6, 6, UiTheme::PANEL);
+    // Viewfinder bump on top
+    canvas_.fillRoundRect(iconX + 14, iconY, 22, 10, 3, UiTheme::PANEL);
+    // Lens (accent fill + outline ring)
+    canvas_.fillCircle(iconCx, iconCy, 10, UiTheme::CYAN);
+    canvas_.drawCircle(iconCx, iconCy, 11, UiTheme::PANEL_LIGHT);
+    // Flash dot
+    canvas_.fillCircle(iconX + iconW - 10, iconY + 14, 3, UiTheme::CYAN);
+
+    // "No photos yet" text
     canvas_.setTextDatum(MC_DATUM);
     canvas_.setTextSize(2);
-    canvas_.setTextColor(UiTheme::TEXT_DIM, UiTheme::BG);
-    canvas_.drawString("Empty", DISPLAY_WIDTH / 2, DISPLAY_HEIGHT / 2);
+    canvas_.setTextColor(UiTheme::TEXT, UiTheme::BG);
+    canvas_.drawString("No photos yet", DISPLAY_WIDTH / 2, iconY + iconH + 24);
+
+    // Hint text
     canvas_.setTextSize(1);
+    canvas_.setTextColor(UiTheme::TEXT_DIM, UiTheme::BG);
+    canvas_.drawString("Use Camera to take photos", DISPLAY_WIDTH / 2, iconY + iconH + 46);
+
     canvas_.setTextDatum(TL_DATUM);
 }
 
@@ -273,12 +298,7 @@ void AlbumUI::drawFullView() {
                   0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
     // Back button overlay
-    canvas_.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, UiTheme::PANEL);
-    canvas_.drawRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 6, UiTheme::PANEL_LIGHT);
-    canvas_.setTextDatum(MC_DATUM);
-    canvas_.setTextSize(1);
-    canvas_.setTextColor(UiTheme::TEXT_DIM, UiTheme::PANEL);
-    canvas_.drawString("< Back", BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2 + 1);
+    UiTheme::drawBackButton(canvas_, BACK_X, BACK_Y, BACK_W, BACK_H, millis() < backPressedUntil_);
 
     // Delete button
     canvas_.fillRoundRect(DEL_X, DEL_Y, DEL_W, DEL_H, 6, UiTheme::PANEL);

@@ -23,6 +23,8 @@ void MemoManager::load() {
             memset(&entries_[i], 0, sizeof(MemoEntry));
         }
     }
+    dirty_ = false;
+    lastWriteMs_ = millis();
 }
 
 void MemoManager::save() {
@@ -45,7 +47,7 @@ bool MemoManager::add(const char* text, uint32_t remindAt) {
     e.text[MAX_MEMO_TEXT_LEN] = '\0';
     e.remindAt = remindAt;
     ++count_;
-    save();
+    dirty_ = true;
     return true;
 }
 
@@ -58,7 +60,7 @@ bool MemoManager::remove(uint8_t id) {
             }
             --count_;
             memset(&entries_[count_], 0, sizeof(MemoEntry));
-            save();
+            dirty_ = true;
             return true;
         }
     }
@@ -96,8 +98,22 @@ void MemoManager::clearReminder(uint8_t id) {
     for (int i = 0; i < count_; ++i) {
         if (entries_[i].id == id) {
             entries_[i].remindAt = 0;
-            save();
+            dirty_ = true;
             return;
         }
+    }
+}
+
+void MemoManager::flush() {
+    if (dirty_) {
+        save();
+        dirty_ = false;
+        lastWriteMs_ = millis();
+    }
+}
+
+void MemoManager::update() {
+    if (dirty_ && millis() - lastWriteMs_ >= WRITE_INTERVAL_MS) {
+        flush();
     }
 }

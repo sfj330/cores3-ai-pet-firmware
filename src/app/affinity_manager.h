@@ -14,6 +14,8 @@ public:
     const char* levelName() const;
     const char* moodName() const;
     const String& recent() const;
+    void flush();
+    void update();
 
 private:
     void save();
@@ -21,5 +23,7 @@ private:
     Preferences prefs_;
     int value_ = AFFINITY_DEFAULT_VALUE;
     String recent_ = "First meet";
-    unsigned long lastSaveTime_ = 0;
+    bool dirty_ = false;
+    unsigned long lastWriteMs_ = 0;
+    static constexpr unsigned long WRITE_INTERVAL_MS = 10000;
 };
