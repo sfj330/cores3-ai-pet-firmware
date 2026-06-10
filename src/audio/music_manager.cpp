@@ -397,10 +397,7 @@ bool MusicManager::waitForIdle(uint32_t timeoutMs) const {
 void MusicManager::releaseSpeaker() {
     M5.Speaker.stop(MUSIC_CHANNEL);
     M5.Speaker.stop(MUSIC_SPEAKER_CHANNEL);
-    if (M5.Speaker.isRunning()) {
-        M5.Speaker.end();
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+    // Remove aggressive M5.Speaker.end() to avoid racing with XiaoZhi mic/speaker I2S lifecycle
 }
 
 void MusicManager::taskThunk(void* arg) {

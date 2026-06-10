@@ -75,7 +75,6 @@ private:
     void sendMcpToolsList(int id);
     void parseMcpInitializeParams(JsonObjectConst params);
     bool tryStartListeningStream();
-    void processWsConnect();
 
     bool initAudio();
     void deinitAudio();
@@ -126,16 +125,6 @@ private:
     volatile bool pendingStartListening_ = false;
     volatile bool pendingStopListening_ = false;
     VoiceState state_ = VoiceState::IDLE;
-
-    enum class WsConnectState : uint8_t {
-        IDLE,
-        CONNECTING,
-        WAITING_HELLO,
-        READY,
-        FAILED
-    };
-    WsConnectState wsConnectState_ = WsConnectState::IDLE;
-    unsigned long wsConnectStartMs_ = 0;
     std::function<void(VoiceState)> callback_;
     McpToolCallback mcpToolCallback_;
 
@@ -191,5 +180,5 @@ private:
     static constexpr int AUDIO_FRAME_DURATION_MS = 60;
     static constexpr int AUDIO_FRAME_SAMPLES = AUDIO_SAMPLE_RATE * AUDIO_FRAME_DURATION_MS / 1000;
     static constexpr int OPUS_BITRATE = 24000;
-    static constexpr int OPUS_COMPLEXITY = 5;
+    static constexpr int OPUS_COMPLEXITY = 1;
 };

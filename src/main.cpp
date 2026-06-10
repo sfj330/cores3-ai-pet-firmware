@@ -346,8 +346,6 @@ static void stopMusicForExclusiveAudio() {
         }
         gMusicManager.releaseSpeaker();
         gMusicUI.markDirty();
-    } else if (M5.Speaker.isRunning()) {
-        gMusicManager.releaseSpeaker();
     }
 }
 
@@ -3032,6 +3030,7 @@ static void stateChangeHandler(AppStateEnum state) {
             gInfoUI.hide();
             gMusicUI.hide();
             stopMusicForExclusiveAudio();
+            stopFaceVisionBurst("enter AI");
             gFaceDetector.setEnabled(false);
             gCameraManager.stopCapture();
             gFaceUI.clearStatusText();
