@@ -29,6 +29,10 @@ public:
     void exitSleep();
     bool isSleeping() const;
 
+    void enterDeepSleep(uint64_t sleepSeconds = 0);
+    int getAmbientLight() const { return ambientLight_; }
+    void updateAmbientLight();
+
 private:
     float readVoltage();
 
@@ -37,4 +41,6 @@ private:
     bool lowBattery_ = false;
     LowBatteryCallback callback_ = nullptr;
     bool sleeping_ = false;
+    int ambientLight_ = 0;
+    unsigned long lastLightReadMs_ = 0;
 };

@@ -2,41 +2,51 @@
 
 static constexpr const char* NVS_NAMESPACE = "affinity";
 static constexpr const char* NVS_KEY_VALUE = "val";
+static constexpr const char* NVS_KEY_MOOD = "mood";
 
 void AffinityManager::begin() {
     prefs_.begin(NVS_NAMESPACE, false);
     value_ = prefs_.getInt(NVS_KEY_VALUE, AFFINITY_DEFAULT_VALUE);
-    if (value_ < AFFINITY_MIN_VALUE) value_ = AFFINITY_MIN_VALUE;
-    if (value_ > AFFINITY_MAX_VALUE) value_ = AFFINITY_MAX_VALUE;
+    value_ = clampValue(value_);
+    moodValue_ = prefs_.getInt(NVS_KEY_MOOD, MOOD_DEFAULT_VALUE);
+    moodValue_ = clampValue(moodValue_);
     recent_ = "Ready";
     dirty_ = false;
     lastWriteMs_ = millis();
     recentInteractionCount_ = 0;
     lastInteractionMs_ = 0;
     lastDecayMs_ = millis();
+    lastMoodDecayMs_ = millis();
+    memset(lastMoodEventMs_, 0, sizeof(lastMoodEventMs_));
     comboCount_ = 0;
     comboStartMs_ = 0;
-    Serial.printf("Affinity loaded: %d\n", value_);
+    Serial.printf("Affinity loaded: bond=%d mood=%d\n", value_, moodValue_);
 }
 
 void AffinityManager::add(int delta, const char* reason) {
-    int prev = value_;
-    value_ += delta;
-    if (value_ < AFFINITY_MIN_VALUE) value_ = AFFINITY_MIN_VALUE;
-    if (value_ > AFFINITY_MAX_VALUE) value_ = AFFINITY_MAX_VALUE;
+    applyInteraction(AffinityEventType::GENERIC, delta, delta, reason);
+}
+
+void AffinityManager::applyInteraction(AffinityEventType type, int bondDelta, int moodDelta, const char* reason) {
+    int prevBond = value_;
+    int prevMood = moodValue_;
+    value_ = clampValue(value_ + bondDelta);
+
+    unsigned long now = millis();
+    if (shouldApplyMood(type, now)) {
+        moodValue_ = clampValue(moodValue_ + moodDelta);
+    }
+
     if (reason != nullptr && reason[0] != '\0') {
         recent_ = reason;
     }
-    if (value_ != prev) {
+    if (value_ != prevBond || moodValue_ != prevMood) {
         dirty_ = true;
     }
 
-    // Update interaction tracking
-    unsigned long now = millis();
     recentInteractionCount_++;
     lastInteractionMs_ = now;
 
-    // Combo tracking
     if (now - comboStartMs_ < COMBO_WINDOW_MS) {
         comboCount_++;
     } else {
@@ -47,16 +57,26 @@ void AffinityManager::add(int delta, const char* reason) {
 
 void AffinityManager::reset() {
     value_ = AFFINITY_DEFAULT_VALUE;
+    moodValue_ = MOOD_DEFAULT_VALUE;
     recent_ = "Reset";
     dirty_ = true;
 }
 
 void AffinityManager::save() {
     prefs_.putInt(NVS_KEY_VALUE, value_);
+    prefs_.putInt(NVS_KEY_MOOD, moodValue_);
 }
 
 int AffinityManager::value() const {
     return value_;
+}
+
+int AffinityManager::bondValue() const {
+    return value_;
+}
+
+int AffinityManager::moodValue() const {
+    return moodValue_;
 }
 
 const char* AffinityManager::levelName() const {
@@ -67,10 +87,10 @@ const char* AffinityManager::levelName() const {
 }
 
 const char* AffinityManager::moodName() const {
-    if (recentInteractionCount_ >= MOOD_THRESHOLD_LIVELY) return "Lively";
-    if (recentInteractionCount_ >= MOOD_THRESHOLD_HAPPY) return "Happy";
-    if (recentInteractionCount_ >= MOOD_THRESHOLD_WARM) return "Warm";
-    if (recentInteractionCount_ >= MOOD_THRESHOLD_QUIET) return "Quiet";
+    if (moodValue_ >= 85) return "Lively";
+    if (moodValue_ >= 70) return "Happy";
+    if (moodValue_ >= 50) return "Warm";
+    if (moodValue_ >= 30) return "Quiet";
     return "Lonely";
 }
 
@@ -109,8 +129,50 @@ void AffinityManager::update() {
         lastDecayMs_ = now;  // Reset decay timer on any interaction
     }
 
+    if (now - lastMoodDecayMs_ >= MOOD_DECAY_INTERVAL_MS) {
+        int prevMood = moodValue_;
+        if (lastInteractionMs_ == 0 || now - lastInteractionMs_ >= MOOD_DECAY_INTERVAL_MS) {
+            if (moodValue_ > MOOD_DEFAULT_VALUE) {
+                moodValue_--;
+            } else if (moodValue_ > 20 && now - lastInteractionMs_ >= MOOD_WINDOW_MS) {
+                moodValue_--;
+            } else if (moodValue_ < MOOD_DEFAULT_VALUE && now - lastInteractionMs_ < MOOD_WINDOW_MS) {
+                moodValue_++;
+            }
+        }
+        if (moodValue_ != prevMood) {
+            dirty_ = true;
+        }
+        lastMoodDecayMs_ = now;
+    }
+
     // Existing deferred write logic
     if (dirty_ && millis() - lastWriteMs_ >= WRITE_INTERVAL_MS) {
         flush();
     }
+}
+
+int AffinityManager::clampValue(int value) const {
+    if (value < AFFINITY_MIN_VALUE) return AFFINITY_MIN_VALUE;
+    if (value > AFFINITY_MAX_VALUE) return AFFINITY_MAX_VALUE;
+    return value;
+}
+
+int AffinityManager::eventIndex(AffinityEventType type) const {
+    int idx = static_cast<int>(type);
+    if (idx < 0 || idx >= EVENT_COUNT) return 0;
+    return idx;
+}
+
+bool AffinityManager::shouldApplyMood(AffinityEventType type, unsigned long now) {
+    int idx = eventIndex(type);
+    bool negativeOrIdle = (type == AffinityEventType::SHAKE ||
+                           type == AffinityEventType::LOW_BATTERY ||
+                           type == AffinityEventType::IDLE);
+    if (!negativeOrIdle && lastMoodEventMs_[idx] > 0 &&
+        now - lastMoodEventMs_[idx] < MOOD_EVENT_COOLDOWN_MS) {
+        return false;
+    }
+    lastMoodEventMs_[idx] = now;
+    return true;
 }

@@ -5,6 +5,8 @@
 #include <freertos/semphr.h>
 #include "esp_system.h"
 #include <cmath>
+#include <cstdio>
+#include <ctime>
 
 #include "config/app_config.h"
 #include "app/app_state.h"
@@ -186,7 +188,9 @@ static volatile MusicAction gPendingAiMusicAction = MusicAction::NONE;
 static volatile PetReaction gPendingAiPetReaction = PetReaction::NONE;
 static volatile ServoAiAction gPendingAiServoAction = ServoAiAction::NONE;
 static String gPendingAiStringParam = "";
+static String gPendingMemoRemindAtParam = "";
 static int gPendingMemoRemoveId = 0;
+static int gPendingMemoRemoveIndex = 0;
 static unsigned long gLastMemoCheckMs = 0;
 static bool gMemoRemindActive = false;
 static unsigned long gMemoRemindUntilMs = 0;
@@ -303,7 +307,7 @@ static bool hasPendingDeviceControlAction();
 static void updateSharedServoMotion(unsigned long now);
 static void updateCompanionMotion(unsigned long now);
 static void updateDanceLifecycle(unsigned long now);
-static void addAffinity(int delta, const char* reason);
+static void addAffinity(AffinityEventType type, int bondDelta, int moodDelta, const char* reason);
 static bool startDanceMusic(String& note);
 static void applyServoPoseForEmotion(FaceEmotion emotion);
 static void applyServoPoseForPetReaction(PetReaction reaction);
@@ -437,6 +441,13 @@ static void applyVolumeLevel(SystemVolumeLevel level) {
 static void enterSleepMode() {
     gMemoManager.flush();
     gAffinityManager.flush();
+    // If battery is critically low, use RTC deep sleep instead of light sleep
+    if (gPowerManager.getVoltage() > 0.1f && gPowerManager.getVoltage() < RTC_DEEP_SLEEP_VOLTAGE) {
+        Serial.printf("Low battery %.2fV, entering deep sleep (RTC %ds)\n",
+                      gPowerManager.getVoltage(), (int)RTC_DEEP_SLEEP_SECONDS);
+        gPowerManager.enterDeepSleep(RTC_DEEP_SLEEP_SECONDS);
+        // Does not return — device reboots on RTC wakeup
+    }
     gPowerManager.enterSleep();
     M5.Lcd.setBrightness(24);
 }
@@ -570,8 +581,10 @@ static void updateMusicUiData() {
 }
 
 static void updateAffinityUiData() {
-    gAffinityUI.setState(gAffinityManager.value(),
-                         gAffinityManager.levelName(),
+    String bondLevel = String(gAffinityManager.levelName()) + " " +
+                       String(gAffinityManager.bondValue()) + "%";
+    gAffinityUI.setState(gAffinityManager.moodValue(),
+                         bondLevel.c_str(),
                          gAffinityManager.moodName(),
                          gAffinityManager.recent().c_str());
 }
@@ -582,23 +595,25 @@ static void updateMemoUiData() {
     time_t wallNow;
     time(&wallNow);
     uint32_t now32 = static_cast<uint32_t>(wallNow);
+    uint32_t uptimeNow = static_cast<uint32_t>(millis() / 1000);
     for (int i = 0; i < cnt && i < MAX_MEMO_COUNT; ++i) {
         const MemoEntry* e = gMemoManager.entry(i);
         if (e) {
             strncpy(memos[i].text, e->text, 60);
             memos[i].text[60] = '\0';
             memos[i].remindAt = e->remindAt;
+            memos[i].timeBase = e->timeBase;
+            memos[i].id = e->id;
         }
     }
-    gMemoUI.setMemos(memos, cnt, now32);
+    gMemoUI.setMemos(memos, cnt, now32, uptimeNow);
 }
 
-static void addAffinity(int delta, const char* reason) {
-    // Combo bonus: +1 for each consecutive interaction within 5 minutes
-    if (gAffinityManager.comboCount() >= 2) {
-        delta += 1;
+static void addAffinity(AffinityEventType type, int bondDelta, int moodDelta, const char* reason) {
+    if (bondDelta > 0 && gAffinityManager.comboCount() >= 2) {
+        bondDelta += 1;
     }
-    gAffinityManager.add(delta, reason);
+    gAffinityManager.applyInteraction(type, bondDelta, moodDelta, reason);
     gAffinityUI.markDirty();
 }
 
@@ -989,7 +1004,7 @@ static void handleFaceTap(int x, int y) {
     int cy = DISPLAY_HEIGHT / 2;
     AppState& appState = AppState::instance();
     gPomodoroFaceEmotionActive = false;
-    addAffinity(1, "Touch");
+    addAffinity(AffinityEventType::TOUCH, 1, 2, "Touch");
 
     if (y < cy / 2) {
         appState.setEmotion(FaceEmotion::HAPPY);
@@ -1336,7 +1351,7 @@ static void handleCameraShot() {
     bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
     if (ok) {
         gCameraDebugUI.setLastPhotoPath(path.c_str());
-        addAffinity(3, "Photo saved");
+        addAffinity(AffinityEventType::PHOTO, 3, 4, "Photo saved");
         if (trackingNote.length() > 0) {
             status += "; ";
             status += trackingNote;
@@ -1772,7 +1787,7 @@ static void processCameraCapturePhoto(int callId) {
     bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
     if (ok) {
         Serial.printf("Voice photo saved: %s (%s)\n", path.c_str(), trackingNote.c_str());
-        addAffinity(3, "Photo saved");
+        addAffinity(AffinityEventType::PHOTO, 3, 4, "Photo saved");
         String result = "Photo saved: " + path;
         if (trackingNote.length() > 0) {
             result += "; ";
@@ -2098,7 +2113,7 @@ static void processPetReact(int callId) {
 
     const char* name = petReactionName(reaction);
     gFaceUI.setStatusText(name, UiTheme::CYAN, PET_REACT_DURATION_MS);
-    addAffinity(3, name);
+    addAffinity(AffinityEventType::GENERIC, 3, 3, name);
 
     if (callId >= 0) {
         gXiaoZhiClient.queueMcpToolTextResult(callId,
@@ -2131,7 +2146,7 @@ static void processServoControl(int callId) {
             AppState::instance().setEmotion(FaceEmotion::HAPPY);
             gLastServoPoseEmotion = FaceEmotion::HAPPY;
             gFaceUI.setStatusText("Dance!", UiTheme::PINK, 6500);
-            addAffinity(5, "Dance");
+            addAffinity(AffinityEventType::DANCE, 5, 6, "Dance");
             startDanceMusic(musicNote);
         } else {
             gDanceStartedMusic = false;
@@ -2161,6 +2176,80 @@ static void processServoControl(int callId) {
     Serial.printf("AI servo control: %s ok=%d\n", servoAiActionName(action), ok ? 1 : 0);
 }
 
+static bool isWallClockSynced(uint32_t wallNow) {
+    return wallNow > 1700000000UL;
+}
+
+static bool parseIsoLocalTime(const String& text, uint32_t& epochOut) {
+    if (text.length() == 0) return false;
+
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    int matched = sscanf(text.c_str(), "%d-%d-%dT%d:%d:%d",
+                         &year, &month, &day, &hour, &minute, &second);
+    if (matched < 5) {
+        second = 0;
+        matched = sscanf(text.c_str(), "%d-%d-%d %d:%d:%d",
+                         &year, &month, &day, &hour, &minute, &second);
+    }
+    if (matched < 5) {
+        second = 0;
+        matched = sscanf(text.c_str(), "%d-%d-%dT%d:%d",
+                         &year, &month, &day, &hour, &minute);
+    }
+    if (matched < 5) {
+        second = 0;
+        matched = sscanf(text.c_str(), "%d-%d-%d %d:%d",
+                         &year, &month, &day, &hour, &minute);
+    }
+    if (matched < 5 ||
+        year < 2023 || month < 1 || month > 12 || day < 1 || day > 31 ||
+        hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+        second < 0 || second > 59) {
+        return false;
+    }
+
+    struct tm tmValue;
+    memset(&tmValue, 0, sizeof(tmValue));
+    tmValue.tm_year = year - 1900;
+    tmValue.tm_mon = month - 1;
+    tmValue.tm_mday = day;
+    tmValue.tm_hour = hour;
+    tmValue.tm_min = minute;
+    tmValue.tm_sec = second;
+    tmValue.tm_isdst = -1;
+    time_t epoch = mktime(&tmValue);
+    if (epoch <= 0) return false;
+    epochOut = static_cast<uint32_t>(epoch);
+    return true;
+}
+
+static String memoRemainingText(const MemoEntry& entry, uint32_t wallNow, uint32_t uptimeNow) {
+    if (entry.remindAt == 0) return "";
+    uint32_t now = entry.timeBase == 2 ? uptimeNow : wallNow;
+    if (entry.timeBase == 1 && !isWallClockSynced(now)) {
+        return "(等待校时)";
+    }
+    int32_t remaining = static_cast<int32_t>(entry.remindAt - now);
+    if (remaining <= 0) {
+        return "(到期)";
+    }
+    if (remaining < 3600) {
+        int minutes = (remaining + 59) / 60;
+        return "(" + String(minutes) + "m)";
+    }
+    if (remaining < 86400) {
+        int hours = (remaining + 3599) / 3600;
+        return "(" + String(hours) + "h)";
+    }
+    int days = (remaining + 86399) / 86400;
+    return "(" + String(days) + "d)";
+}
+
 static void checkMemoReminders(unsigned long now) {
     // Check every 1 second
     if (now - gLastMemoCheckMs < 1000) return;
@@ -2169,9 +2258,7 @@ static void checkMemoReminders(unsigned long now) {
     time_t wallNow;
     time(&wallNow);
     uint32_t now32 = static_cast<uint32_t>(wallNow);
-
-    // Don't check if wall clock not synced
-    if (now32 < 1700000000) return;
+    uint32_t uptimeNow = static_cast<uint32_t>(now / 1000);
 
     // If currently showing a reminder, wait for it to finish
     if (gMemoRemindActive && now < gMemoRemindUntilMs) return;
@@ -2184,7 +2271,7 @@ static void checkMemoReminders(unsigned long now) {
 
     MemoEntry due[4];
     int dueCount = 0;
-    gMemoManager.checkDueReminders(now32, due, 4, dueCount);
+    gMemoManager.checkDueReminders(now32, uptimeNow, due, 4, dueCount);
 
     if (dueCount == 0) return;
 
@@ -2203,6 +2290,7 @@ static void checkMemoReminders(unsigned long now) {
 
     // Clear the reminder (one-shot)
     gMemoManager.clearReminder(e.id);
+    gMemoManager.flush();
 
     // If more reminders pending, set interval
     if (dueCount > 1) {
@@ -2215,6 +2303,8 @@ static void checkMemoReminders(unsigned long now) {
 static void processMemoAdd(int callId) {
     String text = gPendingAiStringParam;
     gPendingAiStringParam = "";
+    String remindAtText = gPendingMemoRemindAtParam;
+    gPendingMemoRemindAtParam = "";
     int remindMinutes = gPendingAiIntParam;
     gPendingAiIntParam = 0;
 
@@ -2224,28 +2314,57 @@ static void processMemoAdd(int callId) {
     }
 
     uint32_t remindAt = 0;
+    uint8_t timeBase = 0;
+    time_t wallNowTime;
+    time(&wallNowTime);
+    uint32_t wallNow = static_cast<uint32_t>(wallNowTime);
     if (remindMinutes > 0) {
-        // Use wall clock if NTP synced
-        time_t now;
-        time(&now);
-        if (now > 1700000000) {  // NTP synced (after 2023)
-            remindAt = static_cast<uint32_t>(now) + static_cast<uint32_t>(remindMinutes * 60);
+        if (isWallClockSynced(wallNow)) {
+            remindAt = wallNow + static_cast<uint32_t>(remindMinutes * 60);
+            timeBase = 1;
         } else {
             remindAt = static_cast<uint32_t>(millis() / 1000) + static_cast<uint32_t>(remindMinutes * 60);
+            timeBase = 2;
         }
+    } else if (remindAtText.length() > 0) {
+        if (!isWallClockSynced(wallNow)) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, "还没有完成网络校时，暂时只能设置几分钟后的相对提醒。", true);
+            return;
+        }
+        if (!parseIsoLocalTime(remindAtText, remindAt)) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, "提醒时间格式无效，请使用 2026-06-01T08:00:00 这样的时间。", true);
+            return;
+        }
+        if (remindAt <= wallNow) {
+            gXiaoZhiClient.queueMcpToolTextResult(callId, "提醒时间已经过去了，请换一个未来时间。", true);
+            return;
+        }
+        timeBase = 1;
     }
 
-    if (!gMemoManager.add(text.c_str(), remindAt)) {
+    if (!gMemoManager.add(text.c_str(), remindAt, timeBase)) {
         gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录已满，请先删除旧条目", true);
         return;
     }
+    gMemoManager.flush();
+    const MemoEntry* added = gMemoManager.entry(gMemoManager.count() - 1);
+    uint8_t id = added ? added->id : 0;
 
-    String result = "已添加备忘录：" + text;
+    String result = "已添加备忘录";
+    if (id > 0) {
+        result += " ID " + String(id);
+    }
+    result += "：" + text;
     if (remindMinutes > 0) {
         result += "，" + String(remindMinutes) + "分钟后提醒";
+        if (timeBase == 2) {
+            result += "（未校时，本次开机期间有效）";
+        }
+    } else if (remindAtText.length() > 0) {
+        result += "，提醒时间 " + remindAtText;
     }
     gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
-    addAffinity(3, "Memo added");
+    addAffinity(AffinityEventType::MEMO, 3, 5, "Memo added");
     Serial.printf("Memo added: %s, remind=%dmin\n", text.c_str(), remindMinutes);
 }
 
@@ -2260,20 +2379,16 @@ static void processMemoList(int callId) {
     time_t wallNow;
     time(&wallNow);
     uint32_t now32 = static_cast<uint32_t>(wallNow);
+    uint32_t uptimeNow = static_cast<uint32_t>(millis() / 1000);
 
     for (int i = 0; i < cnt; ++i) {
         const MemoEntry* e = gMemoManager.entry(i);
         if (!e) continue;
-        if (i > 0) result += " ";
-        result += String(e->id) + "." + String(e->text);
-        if (e->remindAt > 0 && now32 > 1700000000) {
-            int32_t remaining = static_cast<int32_t>(e->remindAt - now32);
-            if (remaining > 0) {
-                remaining /= 60;
-                result += "(" + String(remaining) + "m)";
-            } else {
-                result += "(到期)";
-            }
+        if (i > 0) result += "；";
+        result += "ID " + String(e->id) + " " + String(e->text);
+        String remaining = memoRemainingText(*e, now32, uptimeNow);
+        if (remaining.length() > 0) {
+            result += remaining;
         }
     }
     gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
@@ -2282,8 +2397,18 @@ static void processMemoList(int callId) {
 static void processMemoRemove(int callId) {
     int id = gPendingMemoRemoveId;
     gPendingMemoRemoveId = 0;
+    int index = gPendingMemoRemoveIndex;
+    gPendingMemoRemoveIndex = 0;
 
-    if (gMemoManager.remove(static_cast<uint8_t>(id))) {
+    bool removed = false;
+    if (id > 0) {
+        removed = gMemoManager.remove(static_cast<uint8_t>(id));
+    } else if (index > 0) {
+        removed = gMemoManager.removeAtIndex(index - 1);
+    }
+
+    if (removed) {
+        gMemoManager.flush();
         gXiaoZhiClient.queueMcpToolTextResult(callId, "已删除备忘录", false);
     } else {
         gXiaoZhiClient.queueMcpToolTextResult(callId, "未找到该备忘录", true);
@@ -2541,13 +2666,16 @@ static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst argumen
     if (toolName == "self.memo.add") {
         String text;
         int remindMinutes = 0;
+        String remindAt;
         if (!arguments.isNull()) {
             text = arguments["text"] | "";
             remindMinutes = arguments["remind_minutes"] | 0;
+            remindAt = arguments["remind_at"] | "";
         }
         gPendingAiTool = PendingAiTool::MEMO_ADD;
         gPendingAiCallId = callId;
         gPendingAiStringParam = text;
+        gPendingMemoRemindAtParam = remindAt;
         gPendingAiIntParam = remindMinutes;
         return;
     }
@@ -2560,12 +2688,15 @@ static void handleXiaoZhiMcpTool(const String& toolName, JsonObjectConst argumen
 
     if (toolName == "self.memo.remove") {
         int id = 0;
+        int index = 0;
         if (!arguments.isNull()) {
             id = arguments["id"] | 0;
+            index = arguments["index"] | 0;
         }
         gPendingAiTool = PendingAiTool::MEMO_REMOVE;
         gPendingAiCallId = callId;
         gPendingMemoRemoveId = id;
+        gPendingMemoRemoveIndex = index;
         return;
     }
 
@@ -2924,12 +3055,41 @@ static void gestureEventHandler(const GestureEvent& event) {
         case AppStateEnum::MEMO: {
             if (event.type == GestureType::SINGLE_TAP) {
                 MemoHitZone hit = gMemoUI.hitTest(event.endX, event.endY);
-                if (hit == MemoHitZone::MEMO_HIT_BACK) {
-                    gMemoUI.setBackPressed();
-                    appState.setState(AppStateEnum::MENU);
+                switch (hit) {
+                    case MemoHitZone::MEMO_HIT_BACK:
+                        gMemoUI.setBackPressed();
+                        appState.setState(AppStateEnum::MENU);
+                        break;
+                    case MemoHitZone::MEMO_HIT_CLOSE:
+                        gMemoUI.setBackPressed();
+                        gMemoUI.showList();
+                        break;
+                    case MemoHitZone::MEMO_HIT_DELETE: {
+                        uint8_t delId = gMemoUI.detailEntryId();
+                        if (delId > 0) {
+                            gMemoManager.remove(delId);
+                            updateMemoUiData();
+                            gMemoUI.showList();
+                        }
+                        break;
+                    }
+                    case MemoHitZone::MEMO_HIT_NONE:
+                        break;
+                    default: {
+                        // Entry click: MEMO_HIT_ENTRY_0..7
+                        int entryIdx = static_cast<int>(hit) - static_cast<int>(MemoHitZone::MEMO_HIT_ENTRY_0);
+                        if (entryIdx >= 0 && entryIdx < MAX_MEMO_COUNT) {
+                            gMemoUI.showDetail(entryIdx);
+                        }
+                        break;
+                    }
                 }
             } else if (event.type == GestureType::LEFT_SWIPE) {
-                appState.setState(AppStateEnum::MENU);
+                if (gMemoUI.isDetailView()) {
+                    gMemoUI.showList();
+                } else {
+                    appState.setState(AppStateEnum::MENU);
+                }
             }
             break;
         }
@@ -3227,7 +3387,7 @@ static void aiStateHandler(VoiceState voiceState) {
             case VoiceState::LISTENING:
                 appState.setEmotion(FaceEmotion::LISTENING);
                 if (!gAiListeningAffinityAwarded && gXiaoZhiClient.isListeningStarted()) {
-                    addAffinity(2, "AI listening");
+                    addAffinity(AffinityEventType::AI_LISTENING, 2, 4, "AI listening");
                     gAiListeningAffinityAwarded = true;
                 }
                 break;
@@ -3245,8 +3405,10 @@ static void aiStateHandler(VoiceState voiceState) {
 }
 
 static void lowBatteryHandler(float voltage) {
+    (void)voltage;
     AppState& appState = AppState::instance();
     stopFaceVisionBurst("low battery");
+    addAffinity(AffinityEventType::LOW_BATTERY, 0, -8, "Low battery");
     if (appState.getState() == AppStateEnum::FACE) {
         appState.setEmotion(FaceEmotion::SLEEPY);
     }
@@ -3287,7 +3449,7 @@ static void processPomodoroCompletion(unsigned long now) {
     gPomodoroFaceEmotion = pomodoroEmotionForPreset(presetIndex);
     gPomodoroFaceEmotionPending = true;
     gPomodoroFaceEmotionActive = false;
-    addAffinity(5, "Pomodoro done");
+    addAffinity(AffinityEventType::POMODORO, 5, 8, "Pomodoro done");
     startPomodoroMelody();
     Serial.printf("Pomodoro complete: preset=%d emotion=%d\n",
                   presetIndex, static_cast<int>(gPomodoroFaceEmotion));
@@ -3911,7 +4073,7 @@ void loop() {
         !gAiListeningAffinityAwarded &&
         gXiaoZhiClient.getState() == VoiceState::LISTENING &&
         gXiaoZhiClient.isListeningStarted()) {
-        addAffinity(2, "AI listening");
+        addAffinity(AffinityEventType::AI_LISTENING, 2, 4, "AI listening");
         gAiListeningAffinityAwarded = true;
     }
 
@@ -3949,7 +4111,7 @@ void loop() {
                 AppState::instance().setEmotion(FaceEmotion::SICK);
                 gFaceUI.setTemporaryGaze(0.0f, 0.3f, 2000);
                 gServoMotionController.command(ServoMotionAction::SHAKE);
-                addAffinity(-1, "shaken too hard");
+                addAffinity(AffinityEventType::SHAKE, -1, -10, "shaken too hard");
                 Serial.println("Shake x3 -> SICK, affinity -1");
             } else {
                 AppState::instance().setEmotion(FaceEmotion::SURPRISED);

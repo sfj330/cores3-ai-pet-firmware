@@ -34,7 +34,7 @@ private:
     bool dirty_ = true;
     unsigned long backPressedUntil_ = 0;
 
-    int value_ = AFFINITY_DEFAULT_VALUE;
+    int value_ = MOOD_DEFAULT_VALUE;
     String level_ = "Familiar";
     String mood_ = "Warm";
     String recent_ = "Ready";

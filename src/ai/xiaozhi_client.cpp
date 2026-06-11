@@ -35,6 +35,7 @@ bool XiaoZhiClient::begin() {
     mcpReady_ = false;
     pendingStartListening_ = false;
     pendingStopListening_ = false;
+    resetVoiceActivity();
     lastHttpCode_ = 0;
     lastError_ = "";
     webSocketUrl_ = "";
@@ -902,16 +903,19 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
     {
         JsonObject t = tools.add<JsonObject>();
         t["name"] = "self.memo.add";
-        t["description"] = "Add a memo or reminder. Returns the memo id.";
+        t["description"] = "添加备忘录或提醒。用户说记一下、提醒我、十分钟后、明天几点时调用；返回备忘录 ID。";
         JsonObject s = t["inputSchema"].to<JsonObject>();
         s["type"] = "object";
         JsonObject p = s["properties"].to<JsonObject>();
         JsonObject text = p["text"].to<JsonObject>();
         text["type"] = "string";
-        text["description"] = "Memo text content";
+        text["description"] = "备忘录内容，不要包含提醒时间本身。";
+        JsonObject remindMinutes = p["remind_minutes"].to<JsonObject>();
+        remindMinutes["type"] = "integer";
+        remindMinutes["description"] = "可选，相对提醒分钟数，例如十分钟后填 10。";
         JsonObject remindAt = p["remind_at"].to<JsonObject>();
         remindAt["type"] = "string";
-        remindAt["description"] = "Optional reminder time in ISO 8601 format (e.g. 2026-06-01T08:00:00)";
+        remindAt["description"] = "可选，绝对提醒时间，使用本地时间 ISO 格式，例如 2026-06-01T08:00:00。";
         JsonArray req = s["required"].to<JsonArray>();
         req.add("text");
     }
@@ -919,7 +923,7 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
     {
         JsonObject t = tools.add<JsonObject>();
         t["name"] = "self.memo.list";
-        t["description"] = "List all memos and reminders.";
+        t["description"] = "列出所有备忘录和提醒，包含可用于删除的 ID。";
         JsonObject s = t["inputSchema"].to<JsonObject>();
         s["type"] = "object";
         s["properties"].to<JsonObject>();
@@ -928,15 +932,16 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
     {
         JsonObject t = tools.add<JsonObject>();
         t["name"] = "self.memo.remove";
-        t["description"] = "Remove a memo by its id.";
+        t["description"] = "按 ID 或列表序号删除备忘录。用户说删除第一条时用 index=1；说删除 ID 3 时用 id=3。";
         JsonObject s = t["inputSchema"].to<JsonObject>();
         s["type"] = "object";
         JsonObject p = s["properties"].to<JsonObject>();
         JsonObject id = p["id"].to<JsonObject>();
         id["type"] = "integer";
-        id["description"] = "Memo id to remove";
-        JsonArray req = s["required"].to<JsonArray>();
-        req.add("id");
+        id["description"] = "要删除的备忘录 ID。";
+        JsonObject index = p["index"].to<JsonObject>();
+        index["type"] = "integer";
+        index["description"] = "要删除的列表序号，从 1 开始。";
     }
 
     String resultJson;
@@ -1253,6 +1258,61 @@ void XiaoZhiClient::deinitOpusCodec() {
     opusReady_ = false;
 }
 
+void XiaoZhiClient::resetVoiceActivity() {
+    ambientAudioLevel_ = 0;
+    speechDetected_ = false;
+    listenStreamStartMs_ = millis();
+    lastVoiceActivityMs_ = listenStreamStartMs_;
+}
+
+uint32_t XiaoZhiClient::calculateAudioLevel(const int16_t* pcmData, size_t sampleCount) const {
+    if (!pcmData || sampleCount == 0) return 0;
+    uint64_t sum = 0;
+    for (size_t i = 0; i < sampleCount; ++i) {
+        int32_t sample = pcmData[i];
+        if (sample < 0) sample = -sample;
+        sum += static_cast<uint32_t>(sample);
+    }
+    return static_cast<uint32_t>(sum / sampleCount);
+}
+
+void XiaoZhiClient::updateAutoStopListening(const int16_t* pcmData, size_t sampleCount) {
+    if (!audioCaptureRunning_ || !listenStarted_ || pendingStopListening_) return;
+
+    unsigned long now = millis();
+    uint32_t level = calculateAudioLevel(pcmData, sampleCount);
+    if (ambientAudioLevel_ == 0) {
+        ambientAudioLevel_ = level;
+    } else if (!speechDetected_) {
+        ambientAudioLevel_ = (ambientAudioLevel_ * 15 + level) / 16;
+    }
+
+    uint32_t startThreshold = ambientAudioLevel_ * 3;
+    if (startThreshold < SPEECH_START_LEVEL) startThreshold = SPEECH_START_LEVEL;
+    uint32_t continueThreshold = ambientAudioLevel_ * 2;
+    if (continueThreshold < SPEECH_CONTINUE_LEVEL) continueThreshold = SPEECH_CONTINUE_LEVEL;
+
+    if (level >= startThreshold) {
+        speechDetected_ = true;
+        lastVoiceActivityMs_ = now;
+        return;
+    }
+    if (speechDetected_ && level >= continueThreshold) {
+        lastVoiceActivityMs_ = now;
+        return;
+    }
+
+    if (speechDetected_ &&
+        now - listenStreamStartMs_ >= AUTO_STOP_MIN_LISTEN_MS &&
+        now - lastVoiceActivityMs_ >= AUTO_STOP_SILENCE_MS) {
+        pendingStopListening_ = true;
+        audioCaptureRunning_ = false;
+        Serial.printf("XiaoZhi: local silence auto-stop level=%lu ambient=%lu\n",
+                      static_cast<unsigned long>(level),
+                      static_cast<unsigned long>(ambientAudioLevel_));
+    }
+}
+
 void XiaoZhiClient::audioCaptureTask() {
     Serial.println("XiaoZhi: audio capture task started");
     unsigned long lastDebugPrint = 0;
@@ -1269,6 +1329,7 @@ void XiaoZhiClient::audioCaptureTask() {
                 if (sendAudioFrame(pcmCaptureBuf_, readLen)) {
                     framesSent++;
                 }
+                updateAutoStopListening(pcmCaptureBuf_, readLen);
             }
             unsigned long now = millis();
             if (now - lastDebugPrint > 5000) {
@@ -1346,7 +1407,11 @@ bool XiaoZhiClient::startListening() {
 
 bool XiaoZhiClient::stopListening() {
     pendingStopListening_ = true;
-    setState(VoiceState::IDLE);
+    if (audioChannelOpen_ && wsConnected_) {
+        setState(VoiceState::THINKING);
+    } else {
+        setState(VoiceState::IDLE);
+    }
     return true;
 }
 
@@ -1363,6 +1428,7 @@ bool XiaoZhiClient::tryStartListeningStream() {
     sendListenStart();
     listenStarted_ = true;
     audioCaptureRunning_ = micActive_;
+    resetVoiceActivity();
     setState(VoiceState::LISTENING);
     return true;
 }
@@ -1379,7 +1445,7 @@ void XiaoZhiClient::process() {
         if (opusTxQueue_) {
             xQueueReset(opusTxQueue_);
         }
-        setState(VoiceState::IDLE);
+        setState(audioChannelOpen_ && wsConnected_ ? VoiceState::THINKING : VoiceState::IDLE);
     }
 
     if (pendingStartListening_) {

@@ -52,9 +52,9 @@ void AffinityUI::update() {
     if (!dirty_) return;
 
     canvas_.fillSprite(UiTheme::BG);
-    UiTheme::drawTitle(canvas_, "Bond", "Companion status", UiTheme::PINK);
+    UiTheme::drawTitle(canvas_, "Bond", "Mood today", UiTheme::PINK);
     drawMeter();
-    drawRow(34, 132, "Lv", level_, UiTheme::CYAN);
+    drawRow(34, 132, "Bond", level_, UiTheme::CYAN);
     String moodWithIcon = mood_;
     if (mood_ == "Lonely") moodWithIcon = ":(  Lonely";
     else if (mood_ == "Quiet") moodWithIcon = ":|  Quiet";
@@ -74,7 +74,7 @@ void AffinityUI::drawMeter() {
     int w = 220;
     int h = 42;
     int x = cx - w / 2;
-    int fill = map(value_, AFFINITY_MIN_VALUE, AFFINITY_MAX_VALUE, 0, w - 8);
+    int fill = map(value_, MOOD_MIN_VALUE, MOOD_MAX_VALUE, 0, w - 8);
     if (fill < 0) fill = 0;
     if (fill > w - 8) fill = w - 8;
 

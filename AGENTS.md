@@ -18,7 +18,7 @@ Implemented:
 - Touch gestures: tap, double tap, left/right/up/down swipe, long press.
 - Paged menu with 7 apps: Wi-Fi, Camera, Timer, Music, System, Album, and Memo. Six icons per page with up/down swipe paging and page indicator dots.
 - Settings page opened by up swipe from the Face page, with runtime brightness, volume presets, and battery voltage/percentage display.
-- Memo/reminder page with NVS-persisted memos (up to 8 entries, 60 chars each) and optional timed reminders. Due reminders display on the Face page with a beep alert. Accessible from Menu and through XiaoZhi MCP tools.
+- Memo/reminder page with NVS-persisted memos (up to 8 entries, 60 chars each) and optional timed reminders. Tap to view full detail, delete from detail view. Due reminders display on the Face page with a beep alert. Accessible from Menu and through XiaoZhi MCP tools.
 - Camera preview and JPEG capture to SD.
 - Camera foreground startup stabilization: startup is deferred out of touch/state callbacks, user-opened camera clears failure cooldown, CoreS3 internal I2C is released before init, touch is suspended during camera init, and a failed foreground open gets one clean deinit/retry.
 - AI Vision preview and JPEG description request through a XiaoZhi-provided vision endpoint.
@@ -28,9 +28,9 @@ Implemented:
 - SD MP3/WAV music player. MP3 output is mixed to mono for the CoreS3 speaker at a conservative default volume.
 - Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, XiaoZhi `self.servo.control` commands, and the dance demo. Face and XiaoZhi expression poses keep the mechanical center at pan 90 degrees and tilt 140 degrees.
 - PCA9685 servo driver self-disables after three missing-device scans so an unplugged base does not keep polling PortA forever.
-- Bond/affinity page opened by down swipe from Face. The main affinity score persists in NVS, while recent detail text is runtime-only.
+- Bond/affinity page opened by down swipe from Face. Dynamic mood system based on recent interaction frequency (Lonely/Quiet/Warm/Happy/Lively). Affinity score persists in NVS with natural decay and combo bonus.
 - XiaoZhi OTA activation/config, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools.
-- Wi-Fi auto reconnect, SD retry/fallback, PMU battery voltage reading, brownout safe mode, and basic power/sleep handling.
+- Wi-Fi auto reconnect, SD retry/fallback, PMU battery voltage reading, brownout safe mode, ADC ambient light detection, and RTC-based deep sleep with timer wakeup.
 - Audio buffer optimization: mic capture and Opus encode buffers use INTERNAL RAM for DMA stability; playback buffers use PSRAM.
 - AI page swipe optimization: right-swipe from AI page uses `pauseForForegroundTool()` to preserve the WebSocket connection; long press still fully closes the channel.
 
@@ -138,7 +138,7 @@ src/
 - AI Vision: Back or left swipe -> close preview and return to AI.
 - Pomodoro: IMU orientation selects preset before start; Start/Pause/Reset buttons control timer; Back or left swipe -> Menu.
 - Music: Play/Pause, Stop, Next, Back; left swipe -> Menu; clockwise twist skips to next track.
-- Memo: Back -> Menu.
+- Memo: tap entry -> detail view; Close -> list; Delete -> remove and return to list; left swipe in detail -> list; left swipe in list or Back -> Menu.
 - Sleep: tap, double tap, or shake -> Face.
 
 ## XiaoZhi AI Notes

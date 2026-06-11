@@ -20,10 +20,11 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - Album: a sixth Menu app scans `/photos`, shows up to 12 thumbnails per page, opens full-screen photo view, and supports on-device photo deletion.
 - Servo interaction: Face taps, idle motions, XiaoZhi pet reactions, XiaoZhi servo commands, and the dance demo share the same safe motion controller and rate limits. Face and XiaoZhi expression poses keep the mechanical neutral at pan 90 degrees and tilt 140 degrees.
 - Servo fallback: the PCA9685 driver disables itself after three missing-device scans, so an unplugged servo base does not keep polling PortA forever.
-- Affinity: the Bond page shows score, level, mood, and recent interaction. The affinity score persists in NVS across reboot.
-- XiaoZhi AI: OTA activation and config, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake and tools, device status query, and device control for page switching, brightness, volume, and sleep or wake.
+- Mood and affinity: the Bond page uses a dynamic mood system based on recent interaction frequency (Lonely/Quiet/Warm/Happy/Lively). The main meter shows short-term Mood, with long-term Bond level/value, mood name, and recent reason below it. Mood defaults to 62 and changes with touch, AI conversation, photos, memos, Pomodoro completion, low battery, excessive shaking, and long idle periods. Similar events are cooldown-limited so the value does not sit at 100%. Consecutive interactions within 5 minutes grant a combo bonus. Affinity naturally decays by 1 per hour of inactivity (floor at 35). Mood and Bond both persist in NVS with deferred writes.
+- XiaoZhi AI: OTA activation and config, TLS WebSocket, Opus microphone upload, Opus TTS playback, MCP handshake and tools, device status query, and device control for page switching, brightness, volume, and sleep or wake. While listening on the AI page, a tap immediately ends the current input and enters Thinking; local silence for about 900 ms also auto-stops input while keeping the existing stable Opus audio settings.
 - Web control: when Wi-Fi is connected, the firmware starts a lightweight HTTP control page that shows status, switches pages, adjusts brightness and volume, sends servo actions, and browses or deletes saved photos.
-- Power: battery voltage reads through `M5.Power.getBatteryVoltage()`. Brownout safe mode reduces automatic Face-page camera/servo/audio load after a brownout reset.
+- Power: battery voltage reads through `M5.Power.getBatteryVoltage()`. Brownout safe mode reduces automatic Face-page camera/servo/audio load after a brownout reset. ADC ambient light detection on GPIO1 (PortA). RTC-based deep sleep with timer wakeup when battery voltage drops below 3.3 V.
+- Memo: NVS-persisted memos support relative and absolute reminders. Tap a memo entry to view full detail and delete from the detail view. XiaoZhi MCP `self.memo.add` accepts `remind_minutes` and `remind_at`, `self.memo.list` returns IDs plus readable remaining time, and `self.memo.remove` accepts either the real ID or a 1-based index. Relative reminders can run from uptime without NTP; absolute reminders require NTP.
 
 ## Hardware
 
@@ -31,6 +32,24 @@ Chinese documentation is available in [README_CN.md](README_CN.md).
 - USB cable for build, upload, and serial monitor
 - MicroSD or TF card formatted as FAT or FAT32 for photos and MP3 or WAV music
 - Optional base hardware for battery, PCA9685, and two-axis servos
+
+## Peripheral Usage For Reports
+
+These are existing firmware capabilities for lab-report scoring. No System Resources display page was added.
+
+- LCD plus M5GFX/PSRAM canvas: face, menu, preview, album, Pomodoro, and status rendering.
+- Capacitive touch: taps, double taps, long press, directional swipes, and UI buttons.
+- IMU: shake, twist, Pomodoro orientation selection, and sleep wakeup.
+- Camera: Camera Debug preview/capture, AI Vision preview, and short Face-page heuristic detection bursts.
+- Microphone and speaker: XiaoZhi half-duplex voice, Opus upload/TTS playback, alert tones, and music.
+- MicroSD/TF card: photo storage, local album, and MP3/WAV reads.
+- Wi-Fi: XiaoZhi OTA/WebSocket, AI Vision HTTP, local web control, and NTP sync.
+- PMU/battery readout: voltage, percentage, low-battery warning, and deep-sleep protection.
+- NVS Preferences: Mood/Bond, memos, reminders, and small runtime state persistence.
+- PortA I2C/PCA9685: optional two-axis servo base with automatic missing-device fallback.
+- ADC: ambient light detection on GPIO1 (PortA) for environment-aware behavior.
+- RTC: deep sleep with timer wakeup for low-battery protection.
+- DMA: I2S audio DMA for microphone capture and speaker playback.
 
 Servo wiring used by this firmware:
 
@@ -151,7 +170,7 @@ pio device monitor -p COM5 -b 115200
 ## Controls
 
 - Face page: right swipe opens Menu, left swipe or double tap enters XiaoZhi AI, down swipe opens Bond, up swipe opens Settings, tap top/bottom/left/right changes expression and head pose, shake and twist gestures trigger IMU reactions, and long press enters Sleep.
-- AI page: single tap toggles listening, right swipe or long press returns to Face.
+- AI page: tap while idle starts listening; tap while listening immediately ends the current input and enters Thinking. If the user does not tap, local silence for about 900 ms also auto-stops input. Right swipe or long press returns to Face.
 - Bond page: Back, up swipe, or left swipe returns to Face.
 - Menu page: 7 apps (Wi-Fi, Camera, Timer, Music, System, Album, Memo) with 6 icons per page. Swipe up/down to page between icon pages, page indicator dots shown at the bottom. Tap an icon to open the app. Back returns to Face.
 - Settings page: tap `Low`, `Mid`, or `High` under Brightness and Volume to apply runtime presets. Back, left swipe, or down swipe returns to Face.
@@ -162,7 +181,7 @@ pio device monitor -p COM5 -b 115200
 - Album: in grid view, tap a thumbnail to open it, up/down swipe to page through thumbnails, and left swipe or Back to return to Menu. In full view, left swipe moves forward, right swipe moves back or returns to the grid at the first photo, and Delete or long press removes the current photo.
 - System: shows Wi-Fi, SD, Audio, Control, and Memory rows, while the subtitle summarizes XiaoZhi and Vision readiness. Back returns to Menu.
 - Sleep: tap or double tap wakes the device back to the Face page.
-- Memo: shows memo list with countdown timers for reminders. Back returns to Menu.
+- Memo: shows memo list with countdown timers for reminders. Tap an entry to view full detail; from the detail view, Close returns to the list and Delete removes the memo. Back returns to Menu.
 
 ## SD Card Content
 
@@ -199,6 +218,8 @@ CoreS3 microphone and speaker are treated as half-duplex:
 - Speaking stops microphone capture and starts speaker playback.
 - After TTS stops, listening restarts when the AI page still requests it.
 
+End-of-input uses a hybrid mode: after speaking, the user can tap the AI page to send stop listening immediately; otherwise the firmware auto-stops after speech has been detected and local silence lasts about 900 ms. The audio path keeps the current 16 kHz mono Opus, 60 ms frames, and 24 kbps target bitrate to prioritize stable, low-noise playback.
+
 Exposed MCP tools:
 
 ```text
@@ -225,9 +246,11 @@ AI Vision depends on the vision endpoint and token delivered by the XiaoZhi serv
 
 `self.device.control` supports optional `page`, `brightness`, `volume`, and `sleep` fields. Supported pages are `face`, `menu`, `wifi`, `system`, `camera`, `music`, `pomodoro`, `ai`, and `memo`. Brightness presets are `dim`, `normal`, and `bright`. Volume presets are `quiet`, `normal`, and `loud`. Sleep supports `wake` and `sleep`. Wake restores the last non-sleep brightness preference instead of hard-coding full brightness. The current MCP schema does not expose the new Album page.
 
+Memo tool parameters are: `self.memo.add` accepts `{ text, remind_minutes?, remind_at? }`, where `remind_at` is local ISO time; `self.memo.list` returns ID, content, and remaining time; `self.memo.remove` accepts `{ id? , index? }`, so voice commands such as "delete the first one" and "delete ID 3" both work. Add/remove/clear-reminder operations flush to NVS immediately.
+
 Transcript fallback also recognizes common Chinese commands for status query, opening the System, Music, Camera, and Pomodoro pages, returning to the home page, adjusting brightness, adjusting volume, and sleep or wake requests.
 
-The WebSocket connection uses a non-blocking state machine (IDLE→CONNECTING→WAITING_HELLO→READY/FAILED) instead of blocking the AI task. A DNS pre-check fails fast on resolution failure, so the AI page remains responsive during connection attempts.
+The WebSocket connection uses a non-blocking state machine (`IDLE` -> `CONNECTING` -> `WAITING_HELLO` -> `READY`/`FAILED`) instead of blocking the AI task. A DNS pre-check fails fast on resolution failure, so the AI page remains responsive during connection attempts.
 
 ## Web Control
 
@@ -253,8 +276,8 @@ The current web UI supports:
 - Brightness and volume presets are runtime-only and reset to `normal` plus `normal` after reboot.
 - SD card behavior depends on card format, contact, and power stability. The firmware retries SD init at 25, 10, 4, and 1 MHz.
 - Servo expression and XiaoZhi control are open-loop pose control with rate limiting. They are not PID gimbal control or autonomous base motion.
-- Bond details such as recent interaction text are still runtime-only even though the main affinity score persists.
-- Memo reminders require NTP time sync; if NTP is not synced, reminder times are relative to device boot time.
+- Bond details such as recent interaction text are still runtime-only; Mood and the long-term Bond score persist.
+- Absolute memo reminders require NTP time sync. When NTP is not synced, relative reminders run against the current boot uptime; after reboot, the memo text remains but that runtime-only reminder is cleared.
 
 ## Troubleshooting
 

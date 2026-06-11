@@ -96,6 +96,9 @@ private:
     bool initOpusCodec();
     void deinitOpusCodec();
     void flushOutgoingAudio();
+    void resetVoiceActivity();
+    uint32_t calculateAudioLevel(const int16_t* pcmData, size_t sampleCount) const;
+    void updateAutoStopListening(const int16_t* pcmData, size_t sampleCount);
 
     static constexpr int OPUS_MAX_PACKET_BYTES = 1500;
     static constexpr int OPUS_MAX_DECODE_SAMPLES = 5760;
@@ -158,6 +161,10 @@ private:
     int serverSampleRate_ = 24000;
     int serverFrameDuration_ = 60;
     uint8_t ttsVolume_ = 160;
+    uint32_t ambientAudioLevel_ = 0;
+    bool speechDetected_ = false;
+    unsigned long listenStreamStartMs_ = 0;
+    unsigned long lastVoiceActivityMs_ = 0;
 
     int16_t* pcmCaptureBuf_ = nullptr;
     int16_t* pcmPlaybackBufs_[PLAYBACK_BUFFER_COUNT] = {};
@@ -181,4 +188,8 @@ private:
     static constexpr int AUDIO_FRAME_SAMPLES = AUDIO_SAMPLE_RATE * AUDIO_FRAME_DURATION_MS / 1000;
     static constexpr int OPUS_BITRATE = 24000;
     static constexpr int OPUS_COMPLEXITY = 1;
+    static constexpr unsigned long AUTO_STOP_MIN_LISTEN_MS = 1200;
+    static constexpr unsigned long AUTO_STOP_SILENCE_MS = 900;
+    static constexpr uint32_t SPEECH_START_LEVEL = 700;
+    static constexpr uint32_t SPEECH_CONTINUE_LEVEL = 450;
 };

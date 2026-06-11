@@ -95,6 +95,16 @@ constexpr float BATTERY_EMPTY_VOLTAGE = 3.3f;
 constexpr float BATTERY_LOW_THRESHOLD = 3.5f;   // Go SLEEPY below this
 constexpr unsigned long BROWNOUT_SAFE_MODE_MS = 60000;
 
+// ==================== ADC / Ambient Light ====================
+constexpr int ADC_LIGHT_PIN = 1;               // PortA GPIO1 (ADC1_CH0)
+constexpr int ADC_LIGHT_READ_INTERVAL_MS = 5000;
+constexpr int ADC_LIGHT_DIM_THRESHOLD = 200;   // Below this = dark
+constexpr int ADC_LIGHT_BRIGHT_THRESHOLD = 800; // Above this = bright
+
+// ==================== RTC / Deep Sleep ====================
+constexpr uint64_t RTC_DEEP_SLEEP_SECONDS = 60; // Wake up after 60s to check battery
+constexpr float RTC_DEEP_SLEEP_VOLTAGE = 3.3f;  // Enter deep sleep below this voltage
+
 // ==================== AI ====================
 constexpr bool XIAOZHI_REAL_ACTIVATION = true;
 constexpr const char* XIAOZHI_APP_NAME = "xiaozhi";
@@ -148,6 +158,9 @@ constexpr int MENU_PAGE_SIZE = 6;
 constexpr int AFFINITY_DEFAULT_VALUE = 35;
 constexpr int AFFINITY_MIN_VALUE = 0;
 constexpr int AFFINITY_MAX_VALUE = 100;
+constexpr int MOOD_DEFAULT_VALUE = 62;
+constexpr int MOOD_MIN_VALUE = 0;
+constexpr int MOOD_MAX_VALUE = 100;
 
 // Mood thresholds (based on interaction count in 30-minute window)
 constexpr int MOOD_THRESHOLD_QUIET = 1;
@@ -155,6 +168,8 @@ constexpr int MOOD_THRESHOLD_WARM = 3;
 constexpr int MOOD_THRESHOLD_HAPPY = 6;
 constexpr int MOOD_THRESHOLD_LIVELY = 10;
 constexpr unsigned long MOOD_WINDOW_MS = 30UL * 60 * 1000;  // 30 minutes
+constexpr unsigned long MOOD_EVENT_COOLDOWN_MS = 90UL * 1000;  // Prevent rapid mood farming
+constexpr unsigned long MOOD_DECAY_INTERVAL_MS = 10UL * 60 * 1000;  // Natural mood drift
 constexpr unsigned long AFFINITY_DECAY_INTERVAL_MS = 60UL * 60 * 1000;  // 1 hour
 constexpr unsigned long COMBO_WINDOW_MS = 5UL * 60 * 1000;  // 5 minutes
 

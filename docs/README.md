@@ -24,6 +24,12 @@ This repository is a complete CoreS3 desktop pet firmware, but it is easier to l
 - Tune a servo motion speed in `src/config/app_config.h`, then test with an external servo power supply.
 - Add serial logs around one state transition and watch them at 115200 baud.
 
+## Report Material
+
+- For peripheral usage, cite the "Peripheral Usage For Reports" section in the root `README.md`.
+- The current approach does not add a System Resources UI or a new menu entry. Report scoring should come from existing use of LCD, touch, IMU, camera, microphone, speaker, SD, Wi-Fi, PMU/NVS, PCA9685, ADC, RTC, and DMA.
+- In reports, keep the wording precise: the local vision path is heuristic face-area estimation, not face recognition, and servo movement is open-loop pose control, not a PID gimbal.
+
 ## Rules Worth Keeping
 
 - Keep UI rendering in UI classes and push complete frames through `M5Canvas` where possible.

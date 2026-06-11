@@ -8,17 +8,19 @@ struct MemoEntry {
     uint8_t id = 0;
     char text[MAX_MEMO_TEXT_LEN + 1] = {0};
     uint32_t remindAt = 0;  // Unix timestamp, 0 = no reminder
+    uint8_t timeBase = 0;   // 0 = none, 1 = Unix wall clock, 2 = uptime seconds
 };
 
 class MemoManager {
 public:
     void begin();
-    bool add(const char* text, uint32_t remindAt = 0);
+    bool add(const char* text, uint32_t remindAt = 0, uint8_t timeBase = 0);
     bool remove(uint8_t id);
+    bool removeAtIndex(int index);
     int count() const;
     const MemoEntry* entry(int index) const;
-    void checkDueReminders(uint32_t now, MemoEntry* out, int maxOut, int& outCount);
-    bool hasDueReminders(uint32_t now) const;
+    void checkDueReminders(uint32_t wallNow, uint32_t uptimeNow, MemoEntry* out, int maxOut, int& outCount);
+    bool hasDueReminders(uint32_t wallNow, uint32_t uptimeNow) const;
     void clearReminder(uint8_t id);
     void flush();
     void update();

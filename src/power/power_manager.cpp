@@ -1,6 +1,7 @@
 #include "power_manager.h"
 #include "config/app_config.h"
 #include <M5CoreS3.h>
+#include <esp_sleep.h>
 
 PowerManager::PowerManager() = default;
 
@@ -13,6 +14,7 @@ bool PowerManager::begin() {
 }
 
 void PowerManager::update() {
+    updateAmbientLight();
     voltage_ = readVoltage();
 
     // Calculate percentage (linear approximation)
@@ -67,4 +69,18 @@ void PowerManager::exitSleep() {
 
 bool PowerManager::isSleeping() const {
     return sleeping_;
+}
+
+void PowerManager::updateAmbientLight() {
+    unsigned long now = millis();
+    if (now - lastLightReadMs_ < ADC_LIGHT_READ_INTERVAL_MS && lastLightReadMs_ > 0) return;
+    lastLightReadMs_ = now;
+    ambientLight_ = analogRead(ADC_LIGHT_PIN);
+}
+
+void PowerManager::enterDeepSleep(uint64_t sleepSeconds) {
+    if (sleepSeconds == 0) sleepSeconds = RTC_DEEP_SLEEP_SECONDS;
+    esp_sleep_enable_timer_wakeup(sleepSeconds * 1000000ULL);
+    // Flush NVS data before deep sleep
+    esp_deep_sleep_start();
 }
