@@ -388,7 +388,7 @@ bool XiaoZhiClient::openAudioChannel() {
     webSocket_.enableHeartbeat(15000, 3000, 2);
 
     unsigned long startWait = millis();
-    while (!wsConnected_ && millis() - startWait < 10000) {
+    while (!wsConnected_ && millis() - startWait < 5000) {
         webSocket_.loop();
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -406,7 +406,7 @@ bool XiaoZhiClient::openAudioChannel() {
     webSocket_.sendTXT(hello);
 
     startWait = millis();
-    while (!serverHelloReceived_ && wsConnected_ && millis() - startWait < 10000) {
+    while (!serverHelloReceived_ && wsConnected_ && millis() - startWait < 5000) {
         webSocket_.loop();
         vTaskDelay(pdMS_TO_TICKS(50));
     }

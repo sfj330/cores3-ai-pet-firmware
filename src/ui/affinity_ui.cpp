@@ -55,7 +55,13 @@ void AffinityUI::update() {
     UiTheme::drawTitle(canvas_, "Bond", "Companion status", UiTheme::PINK);
     drawMeter();
     drawRow(34, 132, "Lv", level_, UiTheme::CYAN);
-    drawRow(34, 162, "Mood", mood_, UiTheme::GREEN);
+    String moodWithIcon = mood_;
+    if (mood_ == "Lonely") moodWithIcon = ":(  Lonely";
+    else if (mood_ == "Quiet") moodWithIcon = ":|  Quiet";
+    else if (mood_ == "Warm") moodWithIcon = ":)  Warm";
+    else if (mood_ == "Happy") moodWithIcon = ":D  Happy";
+    else if (mood_ == "Lively") moodWithIcon = ";D  Lively";
+    drawRow(34, 162, "Mood", moodWithIcon, UiTheme::GREEN);
     drawRow(34, 192, "Recent", recent_, UiTheme::AMBER);
     drawBackButton();
     canvas_.pushSprite(0, 0);

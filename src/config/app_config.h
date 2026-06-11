@@ -149,6 +149,15 @@ constexpr int AFFINITY_DEFAULT_VALUE = 35;
 constexpr int AFFINITY_MIN_VALUE = 0;
 constexpr int AFFINITY_MAX_VALUE = 100;
 
+// Mood thresholds (based on interaction count in 30-minute window)
+constexpr int MOOD_THRESHOLD_QUIET = 1;
+constexpr int MOOD_THRESHOLD_WARM = 3;
+constexpr int MOOD_THRESHOLD_HAPPY = 6;
+constexpr int MOOD_THRESHOLD_LIVELY = 10;
+constexpr unsigned long MOOD_WINDOW_MS = 30UL * 60 * 1000;  // 30 minutes
+constexpr unsigned long AFFINITY_DECAY_INTERVAL_MS = 60UL * 60 * 1000;  // 1 hour
+constexpr unsigned long COMBO_WINDOW_MS = 5UL * 60 * 1000;  // 5 minutes
+
 // ==================== Memo ====================
 constexpr int MAX_MEMO_COUNT = 8;
 constexpr int MAX_MEMO_TEXT_LEN = 60;

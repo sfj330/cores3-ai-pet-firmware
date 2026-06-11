@@ -11,6 +11,11 @@ void AffinityManager::begin() {
     recent_ = "Ready";
     dirty_ = false;
     lastWriteMs_ = millis();
+    recentInteractionCount_ = 0;
+    lastInteractionMs_ = 0;
+    lastDecayMs_ = millis();
+    comboCount_ = 0;
+    comboStartMs_ = 0;
     Serial.printf("Affinity loaded: %d\n", value_);
 }
 
@@ -24,6 +29,19 @@ void AffinityManager::add(int delta, const char* reason) {
     }
     if (value_ != prev) {
         dirty_ = true;
+    }
+
+    // Update interaction tracking
+    unsigned long now = millis();
+    recentInteractionCount_++;
+    lastInteractionMs_ = now;
+
+    // Combo tracking
+    if (now - comboStartMs_ < COMBO_WINDOW_MS) {
+        comboCount_++;
+    } else {
+        comboCount_ = 1;
+        comboStartMs_ = now;
     }
 }
 
@@ -49,10 +67,11 @@ const char* AffinityManager::levelName() const {
 }
 
 const char* AffinityManager::moodName() const {
-    if (value_ < 25) return "Quiet";
-    if (value_ < 50) return "Warm";
-    if (value_ < 75) return "Happy";
-    return "Lively";
+    if (recentInteractionCount_ >= MOOD_THRESHOLD_LIVELY) return "Lively";
+    if (recentInteractionCount_ >= MOOD_THRESHOLD_HAPPY) return "Happy";
+    if (recentInteractionCount_ >= MOOD_THRESHOLD_WARM) return "Warm";
+    if (recentInteractionCount_ >= MOOD_THRESHOLD_QUIET) return "Quiet";
+    return "Lonely";
 }
 
 const String& AffinityManager::recent() const {
@@ -68,6 +87,29 @@ void AffinityManager::flush() {
 }
 
 void AffinityManager::update() {
+    unsigned long now = millis();
+
+    // Decay interaction count when outside the 30-minute window
+    if (recentInteractionCount_ > 0 && lastInteractionMs_ > 0 &&
+        now - lastInteractionMs_ >= MOOD_WINDOW_MS) {
+        recentInteractionCount_ = 0;
+        comboCount_ = 0;
+    }
+
+    // Natural affinity decay: -1 per hour of no interaction, down to default
+    if (lastInteractionMs_ > 0 && value_ > AFFINITY_DEFAULT_VALUE &&
+        now - lastInteractionMs_ >= AFFINITY_DECAY_INTERVAL_MS) {
+        if (now - lastDecayMs_ >= AFFINITY_DECAY_INTERVAL_MS) {
+            value_--;
+            if (value_ < AFFINITY_DEFAULT_VALUE) value_ = AFFINITY_DEFAULT_VALUE;
+            dirty_ = true;
+            lastDecayMs_ = now;
+        }
+    } else {
+        lastDecayMs_ = now;  // Reset decay timer on any interaction
+    }
+
+    // Existing deferred write logic
     if (dirty_ && millis() - lastWriteMs_ >= WRITE_INTERVAL_MS) {
         flush();
     }

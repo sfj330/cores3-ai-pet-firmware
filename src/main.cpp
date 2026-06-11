@@ -594,6 +594,10 @@ static void updateMemoUiData() {
 }
 
 static void addAffinity(int delta, const char* reason) {
+    // Combo bonus: +1 for each consecutive interaction within 5 minutes
+    if (gAffinityManager.comboCount() >= 2) {
+        delta += 1;
+    }
     gAffinityManager.add(delta, reason);
     gAffinityUI.markDirty();
 }
@@ -1332,7 +1336,7 @@ static void handleCameraShot() {
     bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
     if (ok) {
         gCameraDebugUI.setLastPhotoPath(path.c_str());
-        addAffinity(2, "Photo saved");
+        addAffinity(3, "Photo saved");
         if (trackingNote.length() > 0) {
             status += "; ";
             status += trackingNote;
@@ -1768,7 +1772,7 @@ static void processCameraCapturePhoto(int callId) {
     bool ok = gCameraManager.captureJpegToFile(path.c_str(), status);
     if (ok) {
         Serial.printf("Voice photo saved: %s (%s)\n", path.c_str(), trackingNote.c_str());
-        addAffinity(2, "Photo saved");
+        addAffinity(3, "Photo saved");
         String result = "Photo saved: " + path;
         if (trackingNote.length() > 0) {
             result += "; ";
@@ -2094,7 +2098,7 @@ static void processPetReact(int callId) {
 
     const char* name = petReactionName(reaction);
     gFaceUI.setStatusText(name, UiTheme::CYAN, PET_REACT_DURATION_MS);
-    addAffinity(2, name);
+    addAffinity(3, name);
 
     if (callId >= 0) {
         gXiaoZhiClient.queueMcpToolTextResult(callId,
@@ -2241,7 +2245,7 @@ static void processMemoAdd(int callId) {
         result += "，" + String(remindMinutes) + "分钟后提醒";
     }
     gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
-    addAffinity(2, "Memo added");
+    addAffinity(3, "Memo added");
     Serial.printf("Memo added: %s, remind=%dmin\n", text.c_str(), remindMinutes);
 }
 
@@ -3223,7 +3227,7 @@ static void aiStateHandler(VoiceState voiceState) {
             case VoiceState::LISTENING:
                 appState.setEmotion(FaceEmotion::LISTENING);
                 if (!gAiListeningAffinityAwarded && gXiaoZhiClient.isListeningStarted()) {
-                    addAffinity(1, "AI listening");
+                    addAffinity(2, "AI listening");
                     gAiListeningAffinityAwarded = true;
                 }
                 break;
@@ -3283,7 +3287,7 @@ static void processPomodoroCompletion(unsigned long now) {
     gPomodoroFaceEmotion = pomodoroEmotionForPreset(presetIndex);
     gPomodoroFaceEmotionPending = true;
     gPomodoroFaceEmotionActive = false;
-    addAffinity(3, "Pomodoro done");
+    addAffinity(5, "Pomodoro done");
     startPomodoroMelody();
     Serial.printf("Pomodoro complete: preset=%d emotion=%d\n",
                   presetIndex, static_cast<int>(gPomodoroFaceEmotion));
@@ -3907,7 +3911,7 @@ void loop() {
         !gAiListeningAffinityAwarded &&
         gXiaoZhiClient.getState() == VoiceState::LISTENING &&
         gXiaoZhiClient.isListeningStarted()) {
-        addAffinity(1, "AI listening");
+        addAffinity(2, "AI listening");
         gAiListeningAffinityAwarded = true;
     }
 
