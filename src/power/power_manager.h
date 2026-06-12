@@ -24,6 +24,9 @@ public:
 
     void setLowBatteryCallback(LowBatteryCallback cb);
 
+    using ServoReadyCheck = std::function<bool()>;
+    void setServoReadyCheck(ServoReadyCheck cb) { servoReadyCheck_ = std::move(cb); }
+
     // Trigger low-power sleep
     void enterSleep();
     void exitSleep();
@@ -40,6 +43,7 @@ private:
     float percentage_ = 0.0f;
     bool lowBattery_ = false;
     LowBatteryCallback callback_ = nullptr;
+    ServoReadyCheck servoReadyCheck_;
     bool sleeping_ = false;
     int ambientLight_ = 0;
     unsigned long lastLightReadMs_ = 0;

@@ -97,6 +97,7 @@ constexpr unsigned long BROWNOUT_SAFE_MODE_MS = 60000;
 
 // ==================== ADC / Ambient Light ====================
 constexpr int ADC_LIGHT_PIN = 1;               // PortA GPIO1 (ADC1_CH0)
+constexpr bool ADC_LIGHT_ENABLED = false;      // GPIO1 shares PortA I2C SCL with PCA9685.
 constexpr int ADC_LIGHT_READ_INTERVAL_MS = 5000;
 constexpr int ADC_LIGHT_DIM_THRESHOLD = 200;   // Below this = dark
 constexpr int ADC_LIGHT_BRIGHT_THRESHOLD = 800; // Above this = bright

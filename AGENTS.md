@@ -27,6 +27,7 @@ Implemented:
 - IMU orientation based Pomodoro timer with four presets and screen rotation.
 - SD MP3/WAV music player. MP3 output is mixed to mono for the CoreS3 speaker at a conservative default volume.
 - Shared safe servo motion layer for Face touch/expression reactions, XiaoZhi pet reactions, XiaoZhi `self.servo.control` commands, and the dance demo. Face and XiaoZhi expression poses keep the mechanical center at pan 90 degrees and tilt 140 degrees.
+- Servo Test page for direct PCA9685 servo control: direction buttons (±5° per tap), preset actions (center/nod/shake/dance/release), and real-time pan/tilt angle display.
 - PCA9685 servo driver self-disables after three missing-device scans so an unplugged base does not keep polling PortA forever.
 - Bond/affinity page opened by down swipe from Face. Dynamic mood system based on recent interaction frequency (Lonely/Quiet/Warm/Happy/Lively). Affinity score persists in NVS with natural decay and combo bonus.
 - XiaoZhi OTA activation/config, TLS WebSocket, Opus mic upload, Opus TTS playback, MCP handshake, and MCP tools.
@@ -36,7 +37,6 @@ Implemented:
 
 Removed or intentionally not implemented:
 
-- Servo Test page and `servo_test_ui.*` have been removed. Do not restore the menu entry unless the user explicitly asks for it.
 - Real ML local face detection and face recognition are not implemented. Do not describe the skin-color heuristic as face recognition.
 - PID gimbal tracking or autonomous base behavior. Current servo support is safe open-loop pose control plus heuristic centering hooks.
 - Full-duplex audio interruption or echo cancellation.
@@ -44,7 +44,7 @@ Removed or intentionally not implemented:
 ## State Machine
 
 - `FACE` - default expression page.
-- `MENU` - paged app menu (7 apps, 6 per page).
+- `MENU` - paged app menu (8 apps, 6 per page).
 - `WIFI_INFO` - Wi-Fi status page.
 - `CAMERA_DEBUG` - camera preview and SD photo capture.
 - `AI_VISION` - camera preview for XiaoZhi vision requests.
@@ -56,6 +56,7 @@ Removed or intentionally not implemented:
 - `SETTINGS` - runtime brightness, volume, and battery display page.
 - `MEMO` - memo/reminder list page.
 - `ALBUM` - photo album grid and full-screen viewer.
+- `SERVO_TEST` - direct servo control test page.
 - `SLEEP` - dim screen sleep page.
 
 ## Code Structure
@@ -105,6 +106,7 @@ src/
 |  |- affinity_ui.h/.cpp
 |  |- settings_ui.h/.cpp
 |  |- memo_ui.h/.cpp
+|  |- servo_test_ui.h/.cpp
 |  `- ui_theme.h
 `- vision/
    |- camera_manager.h/.cpp
@@ -133,12 +135,13 @@ src/
 - AI: single tap toggles listening; right swipe or long press -> Face.
 - Bond: Back, up swipe, or left swipe -> Face.
 - Settings: Back, left swipe, or down swipe -> Face.
-- Menu: tap app icon -> Wi-Fi, Camera, Timer, Music, System, Album, or Memo; up/down swipe pages; Back -> Face; left swipe -> Face.
+- Menu: tap app icon -> Wi-Fi, Camera, Timer, Music, System, Album, Memo, or Servo; up/down swipe pages; Back -> Face; left swipe -> Face.
 - Camera Debug: SHOT -> optionally center a heuristic face region, then save JPEG to `/photos`; Back or left swipe -> Menu.
 - AI Vision: Back or left swipe -> close preview and return to AI.
 - Pomodoro: IMU orientation selects preset before start; Start/Pause/Reset buttons control timer; Back or left swipe -> Menu.
 - Music: Play/Pause, Stop, Next, Back; left swipe -> Menu; clockwise twist skips to next track.
 - Memo: tap entry -> detail view; Close -> list; Delete -> remove and return to list; left swipe in detail -> list; left swipe in list or Back -> Menu.
+- Servo Test: direction buttons -> nudge ±5°; Center/Nod/Shake/Dance/Release buttons; Back or left swipe -> Menu.
 - Sleep: tap, double tap, or shake -> Face.
 
 ## XiaoZhi AI Notes

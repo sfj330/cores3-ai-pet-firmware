@@ -32,6 +32,32 @@ bool ServoMotionController::ensureReady(unsigned long now) {
     return ok;
 }
 
+bool ServoMotionController::forceRescan(unsigned long now) {
+    if (servo_ == nullptr) {
+        status_ = "Servo controller missing";
+        return false;
+    }
+
+    active_ = false;
+    sequence_ = Sequence::NONE;
+    sequenceStep_ = 0;
+    nextSequenceStepAt_ = 0;
+    lastUpdate_ = 0;
+    lastBeginAttempt_ = now;
+    currentInitialized_ = false;
+
+    bool ok = servo_->forceRescan();
+    status_ = servo_->statusText();
+    if (ok) {
+        currentPan_ = servo_->panAngle();
+        currentTilt_ = servo_->tiltAngle();
+        targetPan_ = currentPan_;
+        targetTilt_ = currentTilt_;
+        currentInitialized_ = true;
+    }
+    return ok;
+}
+
 bool ServoMotionController::isReady() const {
     return servo_ != nullptr && servo_->isReady();
 }

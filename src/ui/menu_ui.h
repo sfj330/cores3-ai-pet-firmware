@@ -39,7 +39,7 @@ public:
 
     void setBackPressed() { backPressedUntil_ = millis() + 150; dirty_ = true; }
 
-    static constexpr int APP_COUNT = 7;
+    static constexpr int APP_COUNT = 8;
     static constexpr int PAGE_SIZE = MENU_PAGE_SIZE;
 
 private:

@@ -72,9 +72,14 @@ bool PowerManager::isSleeping() const {
 }
 
 void PowerManager::updateAmbientLight() {
+    if (!ADC_LIGHT_ENABLED) return;
+
     unsigned long now = millis();
     if (now - lastLightReadMs_ < ADC_LIGHT_READ_INTERVAL_MS && lastLightReadMs_ > 0) return;
     lastLightReadMs_ = now;
+    // GPIO1 is shared with Ex_I2C SCL (PortA / PCA9685).
+    // Skip analogRead when servo is active to avoid breaking the I2C bus.
+    if (servoReadyCheck_ && servoReadyCheck_()) return;
     ambientLight_ = analogRead(ADC_LIGHT_PIN);
 }
 

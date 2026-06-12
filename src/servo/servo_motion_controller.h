@@ -23,6 +23,7 @@ public:
     void attach(ServoController& servo);
 
     bool ensureReady(unsigned long now = millis());
+    bool forceRescan(unsigned long now = millis());
     bool isReady() const;
     bool isReleased() const;
     bool isDanceActive() const;

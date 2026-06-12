@@ -14,53 +14,79 @@ constexpr uint8_t MODE1_AUTO_INCREMENT = 0x20;
 constexpr uint8_t MODE1_SLEEP = 0x10;
 constexpr uint8_t MODE2_OUTDRV = 0x04;
 constexpr uint8_t FULL_OFF_BIT = 0x10;
+constexpr uint8_t PCA9685_ADDR_MIN = 0x40;
+constexpr uint8_t PCA9685_ADDR_MAX = 0x7F;
 constexpr float PCA9685_OSCILLATOR_HZ = 25000000.0f;
 constexpr float PWM_STEPS = 4096.0f;
 }
 
 bool ServoController::begin() {
-    if (permanentlyDisabled_) {
-        return false;
-    }
-
+    // Always re-init PortA I2C; camera/touch/AI tasks may have disturbed the bus.
     if (!M5.Ex_I2C.begin()) {
         ready_ = false;
         released_ = true;
         setStatus("PortA I2C init failed");
         Serial.println("Servo: PortA I2C init failed");
+        scanFailCount_++;
         return false;
     }
+    delay(2);
 
-    if (!M5.Ex_I2C.scanID(static_cast<uint8_t>(PCA9685_I2C_ADDR), PCA9685_I2C_FREQ_HZ)) {
+    const uint8_t configuredAddr = static_cast<uint8_t>(PCA9685_I2C_ADDR);
+    uint8_t detectedAddr = 0;
+    if (probeAddress(configuredAddr)) {
+        detectedAddr = configuredAddr;
+    } else {
+        int candidateCount = 0;
+        detectedAddr = findPca9685Address(candidateCount);
+        if (detectedAddr != 0) {
+            Serial.printf("Servo: PCA9685 candidate at 0x%02X (configured 0x%02X, candidates=%d)\n",
+                          detectedAddr, configuredAddr, candidateCount);
+        }
+    }
+
+    if (detectedAddr == 0) {
         ready_ = false;
         released_ = true;
         scanFailCount_++;
-        if (scanFailCount_ >= 3) {
-            permanentlyDisabled_ = true;
-            status_ = "PCA9685 not found, disabled";
-            Serial.println("Servo: PCA9685 not found after 3 attempts, permanently disabled");
-        } else {
-            status_ = String("PCA9685 not found @0x") + String(PCA9685_I2C_ADDR, HEX);
-            Serial.printf("Servo: PCA9685 not found at 0x%02X (attempt %d/3)\n", PCA9685_I2C_ADDR, scanFailCount_);
+        status_ = String("PCA9685 no ACK @0x") + String(configuredAddr, HEX) +
+                  " (try " + String(scanFailCount_) + ")";
+        Serial.printf("Servo: PCA9685 no ACK at 0x%02X (attempt %d, will keep retrying)\n",
+                      configuredAddr, scanFailCount_);
+        if (scanFailCount_ == 1) {
+            scanBusForDiagnostics();
         }
         return false;
     }
 
-    ready_ = true;
-    if (!write8(REG_MODE1, MODE1_SLEEP) ||
-        !write8(REG_MODE2, MODE2_OUTDRV) ||
+    i2cAddr_ = detectedAddr;
+    if (!write8(REG_MODE2, MODE2_OUTDRV) ||
         !setPwmFrequency(static_cast<float>(SERVO_PWM_FREQ_HZ))) {
         ready_ = false;
         released_ = true;
-        setStatus("PCA9685 init failed");
-        Serial.println("Servo: PCA9685 init failed");
+        scanFailCount_++;
+        status_ = String("PCA9685 init failed @0x") + String(i2cAddr_, HEX);
+        Serial.printf("Servo: PCA9685 init failed at 0x%02X (will retry)\n", i2cAddr_);
         return false;
     }
 
-    status_ = String("PCA9685 ready @0x") + String(PCA9685_I2C_ADDR, HEX);
+    scanFailCount_ = 0;
+    ready_ = true;
+    released_ = true;  // PWM channels are off until first setPanTilt() call.
+    status_ = String("PCA9685 ready @0x") + String(i2cAddr_, HEX);
     Serial.printf("Servo: PCA9685 ready at 0x%02X, pan ch=%d, tilt ch=%d\n",
-                  PCA9685_I2C_ADDR, SERVO_PAN_CHANNEL, SERVO_TILT_CHANNEL);
+                  i2cAddr_, SERVO_PAN_CHANNEL, SERVO_TILT_CHANNEL);
     return true;
+}
+
+bool ServoController::forceRescan() {
+    scanFailCount_ = 0;
+    ready_ = false;
+    released_ = true;
+    M5.Ex_I2C.release();
+    delay(2);
+    Serial.println("Servo: force rescan");
+    return begin();
 }
 
 bool ServoController::isReady() const {
@@ -69,6 +95,10 @@ bool ServoController::isReady() const {
 
 bool ServoController::isReleased() const {
     return released_;
+}
+
+uint8_t ServoController::i2cAddress() const {
+    return i2cAddr_;
 }
 
 const String& ServoController::statusText() const {
@@ -95,6 +125,7 @@ bool ServoController::release() {
         setStatus("PWM released");
         Serial.println("Servo: PWM released");
     } else {
+        ready_ = false;
         setStatus("PWM release failed");
         Serial.println("Servo: PWM release failed");
     }
@@ -117,6 +148,7 @@ bool ServoController::setPanTilt(float panDeg, float tiltDeg) {
         released_ = false;
         setStatus("Tracking tilt");
     } else {
+        ready_ = false;
         setStatus("Servo write failed");
         Serial.println("Servo: channel write failed");
     }
@@ -131,9 +163,59 @@ float ServoController::tiltAngle() const {
     return tiltAngle_;
 }
 
+bool ServoController::probeAddress(uint8_t address) {
+    // Probe by writing MODE1=SLEEP. PCA9685 ACKs this register reliably.
+    return write8(address, REG_MODE1, MODE1_SLEEP);
+}
+
+uint8_t ServoController::findPca9685Address(int& foundCount) {
+    foundCount = 0;
+    uint8_t firstUsable = 0;
+    const uint8_t configuredAddr = static_cast<uint8_t>(PCA9685_I2C_ADDR);
+
+    for (uint8_t address = PCA9685_ADDR_MIN; address <= PCA9685_ADDR_MAX; address++) {
+        if (address == configuredAddr) continue;
+        if (!M5.Ex_I2C.scanID(address, PCA9685_I2C_FREQ_HZ)) continue;
+
+        foundCount++;
+        if (firstUsable == 0 && probeAddress(address)) {
+            firstUsable = address;
+        }
+    }
+
+    return firstUsable;
+}
+
+void ServoController::scanBusForDiagnostics() {
+    Serial.println("Servo: scanning PortA I2C bus 0x03..0x77 ...");
+    Serial.flush();
+
+    int found = 0;
+    for (uint8_t address = 0x03; address <= 0x77; address++) {
+        if (M5.Ex_I2C.scanID(address, 400000)) {
+            Serial.printf("Servo: I2C device found @ 0x%02X\n", address);
+            Serial.flush();
+            found++;
+        }
+    }
+
+    Serial.printf("Servo: bus scan done, %d device(s) found.\n", found);
+    if (found == 0) {
+        Serial.println("Servo: NO I2C device responded on PortA. Check Grove cable orientation, "
+                       "PCA9685 VCC logic power, V+ servo power, and common GND.");
+    } else {
+        Serial.println("Servo: PCA9685 auto-detect scans 0x40..0x7F. "
+                       "If your driver is outside that range, update PCA9685_I2C_ADDR.");
+    }
+    Serial.flush();
+}
+
+bool ServoController::write8(uint8_t address, uint8_t reg, uint8_t value) {
+    return M5.Ex_I2C.writeRegister8(address, reg, value, PCA9685_I2C_FREQ_HZ);
+}
+
 bool ServoController::write8(uint8_t reg, uint8_t value) {
-    return M5.Ex_I2C.writeRegister8(static_cast<uint8_t>(PCA9685_I2C_ADDR),
-                                    reg, value, PCA9685_I2C_FREQ_HZ);
+    return write8(i2cAddr_, reg, value);
 }
 
 bool ServoController::setPwmFrequency(float frequencyHz) {
@@ -157,8 +239,7 @@ bool ServoController::setPwm(uint8_t channel, uint16_t onTick, uint16_t offTick)
         static_cast<uint8_t>((offTick >> 8) & 0x0F)
     };
     uint8_t reg = REG_LED0_ON_L + 4 * channel;
-    return M5.Ex_I2C.writeRegister(static_cast<uint8_t>(PCA9685_I2C_ADDR),
-                                   reg, data, sizeof(data), PCA9685_I2C_FREQ_HZ);
+    return M5.Ex_I2C.writeRegister(i2cAddr_, reg, data, sizeof(data), PCA9685_I2C_FREQ_HZ);
 }
 
 bool ServoController::setChannelOff(uint8_t channel) {
@@ -166,8 +247,7 @@ bool ServoController::setChannelOff(uint8_t channel) {
 
     uint8_t data[4] = {0, 0, 0, FULL_OFF_BIT};
     uint8_t reg = REG_LED0_ON_L + 4 * channel;
-    return M5.Ex_I2C.writeRegister(static_cast<uint8_t>(PCA9685_I2C_ADDR),
-                                   reg, data, sizeof(data), PCA9685_I2C_FREQ_HZ);
+    return M5.Ex_I2C.writeRegister(i2cAddr_, reg, data, sizeof(data), PCA9685_I2C_FREQ_HZ);
 }
 
 float ServoController::clampServoAngle(float angleDeg) const {

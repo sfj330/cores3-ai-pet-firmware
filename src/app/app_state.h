@@ -16,6 +16,7 @@ enum class AppStateEnum {
     SETTINGS,
     MEMO,
     ALBUM,
+    SERVO_TEST,
     SLEEP
 };
 

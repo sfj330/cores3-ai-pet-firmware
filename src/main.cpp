@@ -25,6 +25,7 @@
 #include "ui/settings_ui.h"
 #include "ui/album_ui.h"
 #include "ui/memo_ui.h"
+#include "ui/servo_test_ui.h"
 #include "ui/ui_theme.h"
 #include "audio/music_manager.h"
 #include "servo/servo_controller.h"
@@ -52,6 +53,7 @@ AffinityUI gAffinityUI;
 SettingsUI gSettingsUI;
 AlbumUI gAlbumUI;
 MemoUI gMemoUI;
+ServoTestUI gServoTestUI;
 CameraManager gCameraManager;
 FaceDetector gFaceDetector;
 FaceTracker gFaceTracker;
@@ -92,6 +94,7 @@ static volatile bool gNeedActivationCheck = false;
 static volatile bool gNeedOpenAudioChannel = false;
 static volatile bool gNeedCameraDeinitForAi = false;
 static volatile bool gNeedForegroundCameraStart = false;
+static volatile bool gNeedServoRescan = false;
 static bool gActivationCodeRequested = false;
 static unsigned long gLastActivationCheck = 0;
 static volatile bool gPomodoroCompletionPending = false;
@@ -162,7 +165,10 @@ enum class DevicePageAction : uint8_t {
     MUSIC,
     POMODORO,
     AI,
-    MEMO
+    MEMO,
+    ALBUM,
+    SETTINGS,
+    SERVO_TEST
 };
 
 enum class DeviceSleepAction : uint8_t {
@@ -488,11 +494,11 @@ static bool navigateDevicePage(DevicePageAction page) {
             appState.setState(AppStateEnum::CAMERA_DEBUG);
             return true;
         case DevicePageAction::MUSIC:
-            gMusicReturnTo = AppStateEnum::AI;
+            gMusicReturnTo = (current == AppStateEnum::SLEEP) ? AppStateEnum::FACE : current;
             appState.setState(AppStateEnum::MUSIC);
             return true;
         case DevicePageAction::POMODORO:
-            gPomodoroReturnTo = AppStateEnum::AI;
+            gPomodoroReturnTo = (current == AppStateEnum::SLEEP) ? AppStateEnum::FACE : current;
             appState.setState(AppStateEnum::POMODORO);
             return true;
         case DevicePageAction::AI:
@@ -500,6 +506,15 @@ static bool navigateDevicePage(DevicePageAction page) {
             return true;
         case DevicePageAction::MEMO:
             appState.setState(AppStateEnum::MEMO);
+            return true;
+        case DevicePageAction::ALBUM:
+            appState.setState(AppStateEnum::ALBUM);
+            return true;
+        case DevicePageAction::SETTINGS:
+            appState.setState(AppStateEnum::SETTINGS);
+            return true;
+        case DevicePageAction::SERVO_TEST:
+            appState.setState(AppStateEnum::SERVO_TEST);
             return true;
         case DevicePageAction::NONE:
         default:
@@ -518,6 +533,9 @@ static String devicePageLabel(DevicePageAction page) {
         case DevicePageAction::POMODORO: return "番茄钟";
         case DevicePageAction::AI: return "小智页";
         case DevicePageAction::MEMO: return "备忘录";
+        case DevicePageAction::ALBUM: return "相册";
+        case DevicePageAction::SETTINGS: return "设置页";
+        case DevicePageAction::SERVO_TEST: return "舵机测试";
         case DevicePageAction::NONE:
         default:
             return "";
@@ -1098,6 +1116,17 @@ void uiTask(void* pvParameters) {
                     gMemoUI.update();
                     break;
 
+                case AppStateEnum::SERVO_TEST:
+                    gServoTestUI.setServoState(
+                        gServoMotionController.isReady(),
+                        gServoMotionController.isReleased(),
+                        gServoMotionController.targetPan(),
+                        gServoMotionController.targetTilt(),
+                        gServoMotionController.statusText()
+                    );
+                    gServoTestUI.update();
+                    break;
+
                 case AppStateEnum::SLEEP:
                     break;
             }
@@ -1392,6 +1421,9 @@ static DevicePageAction parseDevicePageArg(const String& page) {
     if (value == "pomodoro") return DevicePageAction::POMODORO;
     if (value == "ai") return DevicePageAction::AI;
     if (value == "memo") return DevicePageAction::MEMO;
+    if (value == "album") return DevicePageAction::ALBUM;
+    if (value == "settings") return DevicePageAction::SETTINGS;
+    if (value == "servo_test") return DevicePageAction::SERVO_TEST;
     return DevicePageAction::NONE;
 }
 
@@ -1575,23 +1607,6 @@ static void handleXiaoZhiTranscriptLegacy(const String& text) {
             gPendingAiPetReaction = PetReaction::HAPPY;
         }
         Serial.println("AI transcript fallback: pet react");
-    } else if (containsAny(text, "提醒我", "备忘", "记住")) {
-        gPendingAiTool = PendingAiTool::MEMO_ADD;
-        gPendingAiCallId = -1;
-        // Extract text after the keyword as memo content
-        int idx = -1;
-        if ((idx = text.indexOf("提醒我")) >= 0) {
-            gPendingAiStringParam = text.substring(idx + 3);
-        } else if ((idx = text.indexOf("备忘")) >= 0) {
-            gPendingAiStringParam = text.substring(idx + 2);
-        } else if ((idx = text.indexOf("记住")) >= 0) {
-            gPendingAiStringParam = text.substring(idx + 2);
-        }
-        gPendingAiStringParam.trim();
-        if (gPendingAiStringParam.length() == 0) {
-            gPendingAiStringParam = text;
-        }
-        Serial.println("AI transcript fallback: memo add");
     } else if (asksOpen) {
         gPendingAiTool = PendingAiTool::CAMERA_OPEN;
         gPendingAiCallId = -1;
@@ -2161,6 +2176,13 @@ static void processServoControl(int callId) {
     } else {
         ok = gServoMotionController.ensureReady() &&
              gServoMotionController.command(motionAction);
+        // Auto-center after non-center actions on non-FACE/AI pages
+        if (ok && motionAction != ServoMotionAction::CENTER) {
+            AppStateEnum curState = AppState::instance().getState();
+            if (curState != AppStateEnum::FACE && curState != AppStateEnum::AI) {
+                gServoMotionController.center(SERVO_FACE_MOTION_SPEED_DPS);
+            }
+        }
     }
 
     String result = String("Servo action: ") + servoAiActionName(action);
@@ -2309,7 +2331,7 @@ static void processMemoAdd(int callId) {
     gPendingAiIntParam = 0;
 
     if (text.length() == 0) {
-        gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录内容为空", true);
+        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录内容为空", true);
         return;
     }
 
@@ -2328,22 +2350,22 @@ static void processMemoAdd(int callId) {
         }
     } else if (remindAtText.length() > 0) {
         if (!isWallClockSynced(wallNow)) {
-            gXiaoZhiClient.queueMcpToolTextResult(callId, "还没有完成网络校时，暂时只能设置几分钟后的相对提醒。", true);
+            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "还没有完成网络校时，暂时只能设置几分钟后的相对提醒。", true);
             return;
         }
         if (!parseIsoLocalTime(remindAtText, remindAt)) {
-            gXiaoZhiClient.queueMcpToolTextResult(callId, "提醒时间格式无效，请使用 2026-06-01T08:00:00 这样的时间。", true);
+            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "提醒时间格式无效，请使用 2026-06-01T08:00:00 这样的时间。", true);
             return;
         }
         if (remindAt <= wallNow) {
-            gXiaoZhiClient.queueMcpToolTextResult(callId, "提醒时间已经过去了，请换一个未来时间。", true);
+            if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "提醒时间已经过去了，请换一个未来时间。", true);
             return;
         }
         timeBase = 1;
     }
 
     if (!gMemoManager.add(text.c_str(), remindAt, timeBase)) {
-        gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录已满，请先删除旧条目", true);
+        if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, "备忘录已满，请先删除旧条目", true);
         return;
     }
     gMemoManager.flush();
@@ -2363,7 +2385,7 @@ static void processMemoAdd(int callId) {
     } else if (remindAtText.length() > 0) {
         result += "，提醒时间 " + remindAtText;
     }
-    gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
+    if (callId >= 0) gXiaoZhiClient.queueMcpToolTextResult(callId, result, false);
     addAffinity(AffinityEventType::MEMO, 3, 5, "Memo added");
     Serial.printf("Memo added: %s, remind=%dmin\n", text.c_str(), remindMinutes);
 }
@@ -2800,6 +2822,7 @@ static void gestureEventHandler(const GestureEvent& event) {
                         case 4: appState.setState(AppStateEnum::SYSTEM_INFO); break;
                         case 5: appState.setState(AppStateEnum::ALBUM); break;
                         case 6: appState.setState(AppStateEnum::MEMO); break;
+                        case 7: appState.setState(AppStateEnum::SERVO_TEST); break;
                     }
                     break;
                 }
@@ -3094,6 +3117,61 @@ static void gestureEventHandler(const GestureEvent& event) {
             break;
         }
 
+        case AppStateEnum::SERVO_TEST: {
+            if (event.type == GestureType::SINGLE_TAP) {
+                ServoTestHitZone hit = gServoTestUI.hitTest(event.endX, event.endY);
+                switch (hit) {
+                    case ServoTestHitZone::SERVO_TEST_HIT_BACK:
+                        gServoTestUI.setBackPressed();
+                        appState.setState(AppStateEnum::MENU);
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_LEFT:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.nudge(-5.0f, 0.0f, SERVO_FACE_MOTION_SPEED_DPS, "Servo test");
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_RIGHT:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.nudge(5.0f, 0.0f, SERVO_FACE_MOTION_SPEED_DPS, "Servo test");
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_UP:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.nudge(0.0f, 5.0f, SERVO_FACE_MOTION_SPEED_DPS, "Servo test");
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_DOWN:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.nudge(0.0f, -5.0f, SERVO_FACE_MOTION_SPEED_DPS, "Servo test");
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_CENTER:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.center();
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_NOD:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.command(ServoMotionAction::NOD);
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_SHAKE:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.command(ServoMotionAction::SHAKE);
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_DANCE:
+                        gServoMotionController.ensureReady();
+                        gServoMotionController.command(ServoMotionAction::DANCE);
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_RELEASE:
+                        gServoMotionController.release();
+                        break;
+                    case ServoTestHitZone::SERVO_TEST_HIT_SCAN:
+                        gNeedServoRescan = true;
+                        break;
+                    default:
+                        break;
+                }
+            } else if (event.type == GestureType::LEFT_SWIPE) {
+                appState.setState(AppStateEnum::MENU);
+            }
+            break;
+        }
+
         case AppStateEnum::SLEEP:
             switch (event.type) {
                 case GestureType::SINGLE_TAP:
@@ -3357,6 +3435,12 @@ static void stateChangeHandler(AppStateEnum state) {
             gMenuUI.hide();
             gMemoUI.show();
             updateMemoUiData();
+            break;
+
+        case AppStateEnum::SERVO_TEST:
+            gMenuUI.hide();
+            gServoTestUI.show();
+            gNeedServoRescan = true;
             break;
 
         case AppStateEnum::SLEEP:
@@ -3794,6 +3878,7 @@ void setup() {
     gSettingsUI.begin();
     gAlbumUI.begin();
     gMemoUI.begin();
+    gServoTestUI.begin();
     gServoMotionController.attach(gServoController);
     gPomodoroUI.setCompleteCallback(handlePomodoroComplete);
 
@@ -3834,6 +3919,7 @@ void setup() {
     bootStep("PowerManager...", 12);
     gPowerManager.begin();
     gPowerManager.setLowBatteryCallback(lowBatteryHandler);
+    gPowerManager.setServoReadyCheck([]() { return gServoController.isReady(); });
     bootStep("PowerManager OK", 12);
 
     bootStep("EventBus...", 13);
@@ -3868,8 +3954,10 @@ void setup() {
             else if (page == "music") action = DevicePageAction::MUSIC;
             else if (page == "pomodoro") action = DevicePageAction::POMODORO;
             else if (page == "ai") action = DevicePageAction::AI;
-            else if (page == "album") { AppState::instance().setState(AppStateEnum::ALBUM); return true; }
+            else if (page == "album") action = DevicePageAction::ALBUM;
             else if (page == "memo") action = DevicePageAction::MEMO;
+            else if (page == "settings") action = DevicePageAction::SETTINGS;
+            else if (page == "servo_test") action = DevicePageAction::SERVO_TEST;
             if (action == DevicePageAction::NONE) return false;
             return navigateDevicePage(action);
         };
@@ -4063,6 +4151,11 @@ void loop() {
     checkMemoReminders(now);
     processForegroundCameraStart();
     updateFaceVisionRuntime(now);
+
+    if (gNeedServoRescan) {
+        gNeedServoRescan = false;
+        gServoMotionController.forceRescan(now);
+    }
 
     updateSharedServoMotion(now);
     gServoMotionController.keepAlive(now);

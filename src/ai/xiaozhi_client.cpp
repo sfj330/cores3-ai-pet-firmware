@@ -861,7 +861,7 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
 
         JsonObject page = p["page"].to<JsonObject>();
         page["type"] = "string";
-        page["description"] = "Page target: face, menu, wifi, system, camera, music, pomodoro, ai";
+        page["description"] = "Page target: face, menu, wifi, system, camera, music, pomodoro, ai, album, memo, settings";
         JsonArray pageEnum = page["enum"].to<JsonArray>();
         pageEnum.add("face");
         pageEnum.add("menu");
@@ -903,7 +903,7 @@ void XiaoZhiClient::sendMcpToolsList(int id) {
     {
         JsonObject t = tools.add<JsonObject>();
         t["name"] = "self.memo.add";
-        t["description"] = "添加备忘录或提醒。用户说记一下、提醒我、十分钟后、明天几点时调用；返回备忘录 ID。";
+        t["description"] = "添加备忘录或设置提醒。当用户提到记事、备忘、提醒、记住、几点提醒、几分钟后提醒等意图时必须调用此工具。text 填写备忘内容（不含时间），remind_minutes 填写相对分钟数，remind_at 填写绝对时间。";
         JsonObject s = t["inputSchema"].to<JsonObject>();
         s["type"] = "object";
         JsonObject p = s["properties"].to<JsonObject>();

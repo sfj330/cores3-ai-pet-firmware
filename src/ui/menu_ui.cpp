@@ -24,6 +24,7 @@ const char* appTitle(int index) {
         case 4: return "System";
         case 5: return "Album";
         case 6: return "Memo";
+        case 7: return "Servo";
         default: return "";
     }
 }
@@ -37,6 +38,7 @@ uint16_t appAccent(int index, bool wifiConnected) {
         case 4: return UiTheme::GREEN;
         case 5: return UiTheme::CYAN;
         case 6: return UiTheme::AMBER;
+        case 7: return UiTheme::PINK;
         default: return UiTheme::CYAN;
     }
 }
@@ -248,6 +250,20 @@ void MenuUI::drawAppIcon(int index, int x, int y, int size, uint16_t accent) {
             canvas_.drawFastHLine(x + 16, y + 25, size - 32, accent);
             canvas_.drawFastHLine(x + 16, y + 32, size - 36, accent);
             canvas_.fillCircle(x + size - 14, y + 12, 4, fg);
+            break;
+        case 7:
+            // Servo icon: gear/cog
+            canvas_.drawCircle(cx, cy, 14, fg);
+            canvas_.drawCircle(cx, cy, 8, fg);
+            for (int i = 0; i < 6; ++i) {
+                float angle = i * 1.047198f;
+                int x1 = cx + static_cast<int>(cos(angle) * 12.0f);
+                int y1 = cy + static_cast<int>(sin(angle) * 12.0f);
+                int x2 = cx + static_cast<int>(cos(angle) * 20.0f);
+                int y2 = cy + static_cast<int>(sin(angle) * 20.0f);
+                canvas_.drawLine(x1, y1, x2, y2, fg);
+            }
+            canvas_.fillCircle(cx, cy, 4, accent);
             break;
     }
 }
